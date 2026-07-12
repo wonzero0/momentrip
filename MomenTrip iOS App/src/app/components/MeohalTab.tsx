@@ -1,5 +1,7 @@
 import { useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Home } from 'lucide-react';
+
+interface Props { onHome: () => void; }
 
 type PersonType = 'J' | 'P' | null;
 
@@ -17,7 +19,7 @@ const P_RECS = [
   { emoji: '🎡', title: '야시장 탐험', desc: '밤의 로컬 감성 체험' },
 ];
 
-export function MeohalTab() {
+export function MeohalTab({ onHome }: Props) {
   const [selected, setSelected] = useState<PersonType>(null);
 
   return (
@@ -25,7 +27,18 @@ export function MeohalTab() {
       className="w-full h-full overflow-y-auto"
       style={{ background: '#FAF8F5', fontFamily: "'Noto Sans KR', sans-serif" }}
     >
-      <div className="px-5 pt-5 pb-4">
+<div className="px-5 pt-4 pb-2 flex justify-center">
+  <p
+    style={{
+      fontSize: 14,
+      fontWeight: 700,
+      color: '#2A1F1A',
+    }}
+  >
+    뭐할까유
+  </p>
+</div>
+      <div className="px-5 pt-2 pb-4">
         <p style={{ fontSize: 18, fontWeight: 700, color: '#2A1F1A' }}>어떤 여행자세요?</p>
         <p style={{ fontSize: 13, color: '#9E8B7E', marginTop: 4 }}>
           나의 여행 스타일에 맞는 활동을 찾아드려요

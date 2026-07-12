@@ -27,7 +27,9 @@ const DAYS_OF_WEEK = ['일', '월', '화', '수', '목', '금', '토'];
 const YEAR = 2026;
 const MONTH = 5; // June (0-indexed)
 
-export function GieongTab() {
+interface Props { onHome: () => void; }
+
+export function GieongTab({ onHome }: Props) {
   const [previewDate, setPreviewDate] = useState<number | null>(null);
 
   // June 2026 starts on Monday (1)
@@ -47,8 +49,21 @@ export function GieongTab() {
       className="w-full h-full flex flex-col"
       style={{ background: '#FAF8F5', fontFamily: "'Noto Sans KR', sans-serif" }}
     >
+{/* Sub-header */}
+<div className="px-5 pt-4 pb-2 flex-shrink-0 flex justify-center">
+  <p
+    style={{
+      fontSize: 14,
+      fontWeight: 700,
+      color: '#2A1F1A',
+    }}
+  >
+    기억나유
+  </p>
+</div>
+
       {/* Month header */}
-      <div className="px-5 pt-4 pb-2 flex-shrink-0 flex items-center justify-between">
+      <div className="px-5 pb-2 flex-shrink-0 flex items-center justify-between">
         <button className="w-8 h-8 flex items-center justify-center rounded-full active:opacity-60" style={{ background: '#EDE5DB' }}>
           <ChevronLeft size={16} color="#2A1F1A" />
         </button>

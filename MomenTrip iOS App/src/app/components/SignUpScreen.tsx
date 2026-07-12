@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { ChevronLeft, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { AppScreen } from '../App';
+import { auth } from '../../firebase'; 
+import { createUserWithEmailAndPassword, fetchSignInMethodsForEmail } from 'firebase/auth';
+import { idToAuthEmail, isValidLoginId } from '../lib/authId';
 
 interface Props {
   onNavigate: (s: AppScreen) => void;
@@ -14,8 +17,69 @@ export function SignUpScreen({ onNavigate }: Props) {
   const [showPwC, setShowPwC] = useState(false);
   const [idChecked, setIdChecked] = useState(false);
 
-  const handleCheckDuplicate = () => {
-    if (id.trim()) setIdChecked(true);
+  const handleCheckDuplicate = async () => {
+    if (!isValidLoginId(id)) {
+      alert("아이디는 3자 이상 입력해 주세요.");
+      return;
+    }
+
+    try {
+      const methods = await fetchSignInMethodsForEmail(auth, idToAuthEmail(id));
+      if (methods.length > 0) {
+        setIdChecked(false);
+        alert("이미 사용 중인 아이디입니다.");
+        return;
+      }
+      setIdChecked(true);
+    } catch (error: any) {
+      console.error("아이디 중복확인 에러:", error.code);
+      alert("아이디 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+    }
+  };
+
+  // Firebase 실제 회원가입 처리 함수 추가
+  const handleSignUp = async () => {
+    // 1. 유효성 검사 (입력 폼 체크)
+    if (!id.trim() || !pw || !pwConfirm) {
+      alert("모든 필드를 입력해 주세요.");
+      return;
+    }
+
+    if (!isValidLoginId(id)) {
+      alert("아이디는 3자 이상 입력해 주세요.");
+      return;
+    }
+
+    if (!idChecked) {
+      alert("아이디 중복확인을 진행해 주세요.");
+      return;
+    }
+
+    if (pw !== pwConfirm) {
+      alert("비밀번호가 서로 일치하지 않습니다.");
+      return;
+    }
+
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, idToAuthEmail(id), pw);
+      console.log("🎉 회원가입 성공 유저:", userCredential.user);
+      
+      alert("회원가입이 완료되었습니다! 로그인 페이지로 이동합니다.");
+      onNavigate('login'); // 가입 성공 후 로그인 화면으로 전환
+    } catch (error: any) {
+      console.error("회원가입 에러 발생:", error.code);
+      
+      // Firebase 주요 에러 한글 예외 처리
+      if (error.code === 'auth/email-already-in-use') {
+        alert("이미 사용 중인 아이디입니다.");
+      } else if (error.code === 'auth/invalid-email') {
+        alert("아이디에 사용할 수 없는 문자가 포함되어 있습니다.");
+      } else if (error.code === 'auth/weak-password') {
+        alert("비밀번호가 지나치게 취약합니다. (6자리 이상 입력)");
+      } else {
+        alert("회원가입 중 오류가 발생했습니다: " + error.message);
+      }
+    }
   };
 
   return (
@@ -52,13 +116,13 @@ export function SignUpScreen({ onNavigate }: Props) {
             </label>
             <div className="flex gap-2 mt-2">
               <div
-                className="flex-1 flex items-center rounded-2xl px-4"
-                style={{ height: 54, background: '#F0EAE2' }}
+                className="flex items-center rounded-2xl px-3"
+                style={{ height: 54, background: '#F0EAE2', flex: '1 1 0', minWidth: 0 }}
               >
                 <input
                   className="flex-1 bg-transparent outline-none"
-                  style={{ fontSize: 15, color: '#2A1F1A' }}
-                  placeholder="아이디를 입력하세요"
+                  style={{ fontSize: 15, color: '#2A1F1A', minWidth: 0 }}
+                  placeholder="아이디"
                   value={id}
                   onChange={e => { setId(e.target.value); setIdChecked(false); }}
                 />
@@ -66,10 +130,11 @@ export function SignUpScreen({ onNavigate }: Props) {
               </div>
               <button
                 onClick={handleCheckDuplicate}
-                className="rounded-2xl px-4 active:scale-95 transition-all flex-shrink-0"
+                className="rounded-2xl active:scale-95 transition-all flex-shrink-0"
                 style={{
                   height: 54,
-                  fontSize: 13,
+                  width: 82,
+                  fontSize: 12,
                   fontWeight: 600,
                   background: idChecked ? '#EDE5DB' : '#2A1F1A',
                   color: idChecked ? '#9E8B7E' : '#FAF8F5',
@@ -138,8 +203,9 @@ export function SignUpScreen({ onNavigate }: Props) {
           </div>
         </div>
 
+        {/* 🌟 기존 목업 전환 방식에서 handleSignUp 함수 호출로 변경 */}
         <button
-          onClick={() => onNavigate('main')}
+          onClick={handleSignUp}
           className="mt-10 w-full py-4 rounded-2xl transition-all active:scale-95"
           style={{
             fontSize: 16,

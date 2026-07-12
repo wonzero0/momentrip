@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronLeft, Share2, BookOpen, Grid2X2 } from 'lucide-react';
+import { ChevronLeft, Share2, BookOpen, Grid2X2, Download } from 'lucide-react';
 import { AppScreen, DiaryType } from '../App';
 
 interface Props {
@@ -18,10 +18,16 @@ const FOUR_CUT_PHOTOS = [
 export function DiaryScreen({ onNavigate, diaryType, setDiaryType }: Props) {
   const [diaryText, setDiaryText] = useState('');
   const [shared, setShared] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   const handleShare = () => {
     setShared(true);
     setTimeout(() => setShared(false), 2000);
+  };
+
+  const handleSave = () => {
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   if (!diaryType) {
@@ -218,11 +224,26 @@ export function DiaryScreen({ onNavigate, diaryType, setDiaryType }: Props) {
           </div>
         </div>
 
-        {/* Share button */}
-        <div className="px-5 py-4 flex-shrink-0">
+        {/* Share + Save buttons */}
+        <div className="px-5 py-4 flex-shrink-0 flex gap-3">
+          <button
+            onClick={handleSave}
+            className="py-4 px-5 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all flex-shrink-0"
+            style={{
+              background: saved ? '#2A8B4A' : '#2A1F1A',
+              color: '#FFFFFF',
+              fontSize: 15,
+              fontWeight: 600,
+              border: 'none',
+              boxShadow: '0 8px 24px rgba(42,31,26,0.2)',
+            }}
+          >
+            <Download size={18} />
+            {saved ? '✓' : '저장'}
+          </button>
           <button
             onClick={handleShare}
-            className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all"
+            className="flex-1 py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all"
             style={{
               background: shared ? '#2A8B4A' : '#C97C56',
               color: '#FFFFFF',
@@ -344,11 +365,25 @@ export function DiaryScreen({ onNavigate, diaryType, setDiaryType }: Props) {
         </div>
       </div>
 
-      {/* Share button */}
-      <div className="px-5 py-4 flex-shrink-0">
+      {/* Share + Save buttons */}
+      <div className="px-5 py-4 flex-shrink-0 flex gap-3">
+        <button
+          onClick={handleSave}
+          className="py-4 px-5 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all flex-shrink-0"
+          style={{
+            background: saved ? '#2A8B4A' : 'rgba(255,255,255,0.15)',
+            color: '#FFFFFF',
+            fontSize: 15,
+            fontWeight: 600,
+            border: '1.5px solid rgba(255,255,255,0.2)',
+          }}
+        >
+          <Download size={18} />
+          {saved ? '✓' : '저장'}
+        </button>
         <button
           onClick={handleShare}
-          className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all"
+          className="flex-1 py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all"
           style={{
             background: shared ? '#2A8B4A' : '#C97C56',
             color: '#FFFFFF',
