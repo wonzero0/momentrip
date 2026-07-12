@@ -5,15 +5,126 @@ import { SignUpScreen } from './components/SignUpScreen';
 import { MainApp } from './components/MainApp';
 import { MissionScreen } from './components/MissionScreen';
 import { DiaryScreen } from './components/DiaryScreen';
+import { PhotoAccuracyScreen } from './components/PhotoAccuracyScreen';
+import { RewardScreen } from './components/RewardScreen';
+import { LocalCurrencyScreen } from './components/LocalCurrencyScreen';
+import { AccountMgmtScreen } from './components/AccountMgmtScreen';
+import { NotificationSettingsScreen } from './components/NotificationSettingsScreen';
+import { AppInfoScreen } from './components/AppInfoScreen';
+import { ContactScreen } from './components/ContactScreen';
+import { auth } from '../firebase';
+import { signOut } from 'firebase/auth';
 
-export type AppScreen = 'intro' | 'login' | 'signup' | 'main' | 'mission' | 'diary';
+export type AppScreen = 'intro' | 'login' | 'signup' | 'main' | 'mission' | 'diary' | 'photocheck' | 'reward' | 'localcurrency' | 'accountmgmt' | 'notifications' | 'appinfo' | 'contact';
 export type TabType = 'yeohaeng' | 'gati' | 'meohal' | 'gieong';
 export type DiaryType = 'diary' | 'fourcut' | null;
+
+export interface MissionInfo {
+  id: number;
+  title: string;
+  reward: number;
+  icon: string;
+}
+
+export interface RewardHistoryItem {
+  id: string;
+  date: string;
+  mission: string;
+  earned: number;
+  used: number;
+  missionId?: number;
+  photoDataUrl?: string | null;
+}
+
+const CAPTURED_MISSIONS_KEY = 'momentrip.capturedMissions';
+const REWARD_HISTORY_KEY = 'momentrip.rewardHistory';
+
+function readStoredNumberArray(key: string) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) as number[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function readStoredRewardHistory() {
+  try {
+    const value = localStorage.getItem(REWARD_HISTORY_KEY);
+    return value ? JSON.parse(value) as RewardHistoryItem[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveCapturedMissions(ids: number[]) {
+  localStorage.setItem(CAPTURED_MISSIONS_KEY, JSON.stringify(ids));
+}
+
+function saveRewardHistory(history: RewardHistoryItem[]) {
+  localStorage.setItem(REWARD_HISTORY_KEY, JSON.stringify(history));
+}
+
+function todayLabel() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}.${month}.${day}`;
+}
 
 export default function App() {
   const [screen, setScreen] = useState<AppScreen>('intro');
   const [activeTab, setActiveTab] = useState<TabType>('yeohaeng');
   const [diaryType, setDiaryType] = useState<DiaryType>(null);
+  const [selectedMission, setSelectedMission] = useState<MissionInfo | null>(null);
+  const [capturedMissions, setCapturedMissions] = useState<number[]>(() => readStoredNumberArray(CAPTURED_MISSIONS_KEY));
+  const [rewardHistory, setRewardHistory] = useState<RewardHistoryItem[]>(readStoredRewardHistory);
+
+  const totalPoints = rewardHistory.reduce((sum, item) => sum + item.earned - item.used, 0);
+  const earnedByMission = rewardHistory.reduce<Record<number, number>>((acc, item) => {
+    if (item.missionId && item.earned > 0) acc[item.missionId] = item.earned;
+    return acc;
+  }, {});
+
+  const handleCaptureMission = (mission: MissionInfo, earned: number, photoDataUrl?: string | null) => {
+    setCapturedMissions(prev => {
+      if (prev.includes(mission.id)) return prev;
+      const next = [...prev, mission.id];
+      saveCapturedMissions(next);
+      return next;
+    });
+
+    setRewardHistory(prev => {
+      if (prev.some(item => item.missionId === mission.id && item.earned > 0)) return prev;
+      const next = [
+        {
+          id: `reward-${mission.id}-${Date.now()}`,
+          date: todayLabel(),
+          mission: mission.title,
+          earned,
+          used: 0,
+          missionId: mission.id,
+          photoDataUrl: photoDataUrl ?? null,
+        },
+        ...prev,
+      ];
+      saveRewardHistory(next);
+      return next;
+    });
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+    } catch (error) {
+      console.error('로그아웃 실패:', error);
+    } finally {
+      setSelectedMission(null);
+      setDiaryType(null);
+      setScreen('intro');
+    }
+  };
 
   const isIntro = screen === 'intro';
 
@@ -177,10 +288,18 @@ export default function App() {
                   activeTab={activeTab}
                   setActiveTab={setActiveTab}
                   onNavigate={setScreen}
+                  totalPoints={totalPoints}
+                  onLogout={handleLogout}
                 />
               )}
               {screen === 'mission' && (
-                <MissionScreen onNavigate={setScreen} setDiaryType={setDiaryType} />
+                <MissionScreen
+                  onNavigate={setScreen}
+                  setDiaryType={setDiaryType}
+                  setSelectedMission={setSelectedMission}
+                  captured={capturedMissions}
+                  earnedByMission={earnedByMission}
+                />
               )}
               {screen === 'diary' && (
                 <DiaryScreen
@@ -188,6 +307,39 @@ export default function App() {
                   setDiaryType={setDiaryType}
                   onNavigate={setScreen}
                 />
+              )}
+              {screen === 'photocheck' && (
+                <PhotoAccuracyScreen
+                  mission={selectedMission}
+                  onBack={() => setScreen('mission')}
+                  onConfirm={(earned, photoDataUrl) => {
+                    if (selectedMission) handleCaptureMission(selectedMission, earned, photoDataUrl);
+                    setScreen('mission');
+                  }}
+                />
+              )}
+              {screen === 'reward' && (
+                <RewardScreen
+                  onBack={() => setScreen('main')}
+                  onLocalCurrency={() => setScreen('localcurrency')}
+                  totalPoints={totalPoints}
+                  history={rewardHistory}
+                />
+              )}
+              {screen === 'localcurrency' && (
+                <LocalCurrencyScreen onBack={() => setScreen('reward')} totalPoints={totalPoints} />
+              )}
+              {screen === 'accountmgmt' && (
+                <AccountMgmtScreen onBack={() => setScreen('main')} />
+              )}
+              {screen === 'notifications' && (
+                <NotificationSettingsScreen onBack={() => setScreen('main')} />
+              )}
+              {screen === 'appinfo' && (
+                <AppInfoScreen onBack={() => setScreen('main')} />
+              )}
+              {screen === 'contact' && (
+                <ContactScreen onBack={() => setScreen('main')} />
               )}
             </div>
 
@@ -207,7 +359,14 @@ export default function App() {
             ['signup', '회원가입'],
             ['main', '메인'],
             ['mission', '미션'],
+            ['photocheck', '사진확인'],
             ['diary', '기록'],
+            ['reward', '포인트'],
+            ['localcurrency', '지역화폐'],
+            ['accountmgmt', '계정관리'],
+            ['notifications', '알림'],
+            ['appinfo', '앱정보'],
+            ['contact', '문의'],
           ] as [AppScreen, string][]).map(([s, label]) => (
             <button
               key={s}

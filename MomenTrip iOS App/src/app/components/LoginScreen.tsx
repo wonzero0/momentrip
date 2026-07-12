@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { ChevronLeft, Eye, EyeOff } from 'lucide-react';
 import { AppScreen } from '../App';
+import { auth } from '../../firebase'; 
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { idToAuthEmail, isValidLoginId } from '../lib/authId';
 
 interface Props {
   onNavigate: (s: AppScreen) => void;
@@ -10,6 +13,38 @@ export function LoginScreen({ onNavigate }: Props) {
   const [id, setId] = useState('');
   const [pw, setPw] = useState('');
   const [showPw, setShowPw] = useState(false);
+
+  // 실제 Firebase 로그인 처리 함수
+  const handleLogin = async () => {
+    if (!id.trim() || !pw) {
+      alert("아이디와 비밀번호를 모두 입력해 주세요.");
+      return;
+    }
+
+    if (!isValidLoginId(id)) {
+      alert("아이디는 3자 이상 입력해 주세요.");
+      return;
+    }
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, idToAuthEmail(id), pw);
+      console.log("🎉 로그인 성공! 유저 정보:", userCredential.user);
+      
+      alert("성공적으로 로그인되었습니다!");
+      onNavigate('main'); // 로그인 성공 시 메인 화면으로 이동
+    } catch (error: any) {
+      console.error("로그인 에러 발생:", error.code);
+      
+      // 로그인 예외 처리 리스트
+      if (error.code === 'auth/invalid-credential' || error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {
+        alert("아이디 또는 비밀번호가 일치하지 않습니다.");
+      } else if (error.code === 'auth/invalid-email') {
+        alert("아이디에 사용할 수 없는 문자가 포함되어 있습니다.");
+      } else {
+        alert("로그인 중 오류가 발생했습니다: " + error.message);
+      }
+    }
+  };
 
   return (
     <div
@@ -54,7 +89,7 @@ export function LoginScreen({ onNavigate }: Props) {
                 style={{ fontSize: 15, color: '#2A1F1A' }}
                 placeholder="아이디를 입력하세요"
                 value={id}
-                onChange={e => setId(e.target.value)}
+                onChange={e => setId(e.target.value)} // 🌟 입력 먹통 해결 핵심 코드
               />
             </div>
           </div>
@@ -74,7 +109,7 @@ export function LoginScreen({ onNavigate }: Props) {
                 placeholder="비밀번호를 입력하세요"
                 type={showPw ? 'text' : 'password'}
                 value={pw}
-                onChange={e => setPw(e.target.value)}
+                onChange={e => setPw(e.target.value)} // 🌟 입력 먹통 해결 핵심 코드
               />
               <button onClick={() => setShowPw(!showPw)} className="active:opacity-60">
                 {showPw ? <EyeOff size={18} color="#9E8B7E" /> : <Eye size={18} color="#9E8B7E" />}
@@ -87,8 +122,9 @@ export function LoginScreen({ onNavigate }: Props) {
           </p>
         </div>
 
+        {/* 확인 버튼 클릭 시 handleLogin 실행 */}
         <button
-          onClick={() => onNavigate('main')}
+          onClick={handleLogin}
           className="mt-8 w-full py-4 rounded-2xl transition-all active:scale-95"
           style={{
             fontSize: 16,
@@ -115,7 +151,7 @@ export function LoginScreen({ onNavigate }: Props) {
 
       {/* Decorative bottom illustration */}
       <div
-        className="mx-6 mb-8 rounded-3xl overflow-hidden"
+        className="mx-6 mb-8 rounded-3xl overflow-hidden relative"
         style={{ height: 140 }}
       >
         <img

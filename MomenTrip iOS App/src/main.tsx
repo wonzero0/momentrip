@@ -5,4 +5,3 @@
 
   createRoot(document.getElementById("root")!).render(<App />);
   
-  ㅇㅇㅇㅇㅇㅇㅇㅇ어ㅜㅜ어중주아ㅓ주아ㅓㅜ나ㅓ우마ㅜㄴ아
