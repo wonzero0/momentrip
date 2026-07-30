@@ -1,8 +1,0 @@
-{
-  "appId": "com.jungoari.momentrip",
-  "appName": "MomenTrip",
-  "webDir": "dist",
-  "server": {
-    "cleartext": true
-  }
-}

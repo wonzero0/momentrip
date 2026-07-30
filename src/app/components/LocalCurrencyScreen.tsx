@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState } from 'react';
 import { ChevronLeft, Compass, Users } from 'lucide-react';
 import type { AppScreen } from '../App';
@@ -47,7 +48,6 @@ export function LocalCurrencyScreen({ onNavigate }: Props) {
                 </div>
               </div>
 
-              {/* 지수 비교 영역 */}
               <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#F5EFE6]">
                 <div className="flex items-center gap-2 p-2 rounded-xl" style={{ background: '#FAF8F5' }}>
                   <Users size={16} color="#C97C56" />

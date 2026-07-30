@@ -92,8 +92,8 @@ export function RewardScreen({ onBack, onLocalCurrency, totalPoints, history, on
               <Store size={20} color="#C97C56" />
             </div>
             <div>
-              <p style={{ fontSize: 13, fontWeight: 700, color: '#2A1F1A' }}>충청남도 주요 관광 정보 연동</p>
-              <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 1 }}>충청남도 주요 관광 정보 연동</p>
+              <p style={{ fontSize: 13, fontWeight: 700, color: '#2A1F1A' }}>충청남도 지역화폐 가맹 음식점</p>
+              <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 1 }}>충청남도 지역화폐 가맹 음식점</p>
             </div>
           </div>
           <span style={{ fontSize: 12, fontWeight: 700, color: '#C97C56' }}>보기 &gt;</span>

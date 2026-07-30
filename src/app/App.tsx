@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { IntroScreen } from './components/IntroScreen';
 import { LoginScreen } from './components/LoginScreen';
 import { SignUpScreen } from './components/SignUpScreen';
@@ -12,6 +12,7 @@ import { AccountMgmtScreen } from './components/AccountMgmtScreen';
 import { NotificationSettingsScreen } from './components/NotificationSettingsScreen';
 import { AppInfoScreen } from './components/AppInfoScreen';
 import { ContactScreen } from './components/ContactScreen';
+import { FOOD_DATA } from "../data/food_data"; 
 import { auth } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { ChevronLeft, Coins } from 'lucide-react';
@@ -26,7 +27,7 @@ export type AppScreen =
   | 'photocheck' 
   | 'reward' 
   | 'localcurrency'         
-  | 'tour'                  
+  | 'foodrestaurant'                  
   | 'localcurrency-select'  
   | 'accountmgmt' 
   | 'notifications' 
@@ -90,34 +91,25 @@ function todayLabel() {
   return `${year}.${month}.${day}`;
 }
 
-// 1. 주요 관광 API 화면 컴포넌트
-function TourScreen({ onNavigate }: { onNavigate: (s: AppScreen) => void }) {
-  const [tours, setTours] = useState<any[]>([]);
-  const [selectedRegion, setSelectedRegion] = useState<string>('전체');
-  const [loading, setLoading] = useState(true);
+// 1. 충청남도 지역화폐 가맹 음식점 화면 컴포넌트 (데이터 파일 바로 연동)
+function FoodRestaurantScreen({ onNavigate }: { onNavigate: (s: AppScreen) => void }) {
+  const [selectedRegion, setSelectedRegion] = useState<string>('천안시');
+  const [visibleCount, setVisibleCount] = useState<number>(30);
 
   const regions = [
-    '전체', '천안시', '공주시', '보령시', '아산시', '서산시', 
+    '천안시', '공주시', '보령시', '아산시', '서산시', 
     '논산시', '계룡시', '당진시', '금산군', '부여군', 
     '서천군', '청양군', '홍성군', '예산군', '태안군'
   ];
 
-  useEffect(() => {
-    fetch('/chungnam_tours.json')
-      .then((res) => res.json())
-      .then((data) => {
-        setTours(data);
-        setLoading(false);
-      })
-      .catch((err) => {
-        console.error('데이터 로드 실패:', err);
-        setLoading(false);
-      });
-  }, []);
+  // FOOD_DATA 배열에서 도로명주소나 주소에 선택한 지역이 포함된 항목 필터링
+  const filteredRestaurants = FOOD_DATA.filter((t: any) => {
+    if (!t) return false;
+    const addr = t.도로명주소 || t.소재지도로명주소 || t.주소 || '';
+    return addr.includes(selectedRegion);
+  });
 
-  const filteredTours = selectedRegion === '전체' 
-    ? tours 
-    : tours.filter(t => t.시군명 === selectedRegion);
+  const currentList = filteredRestaurants.slice(0, visibleCount);
 
   return (
     <div className="w-full h-full flex flex-col overflow-hidden" style={{ background: '#FAF8F5', fontFamily: "'Noto Sans KR', sans-serif" }}>
@@ -126,8 +118,8 @@ function TourScreen({ onNavigate }: { onNavigate: (s: AppScreen) => void }) {
           <ChevronLeft size={20} color="#2A1F1A" />
         </button>
         <div className="flex-1">
-          <p style={{ fontSize: 18, fontWeight: 700, color: '#2A1F1A' }}>충청남도 주요 관광 정보</p>
-          <p style={{ fontSize: 11, color: '#9E8B7E' }}>JSON 파일 데이터 연동</p>
+          <p style={{ fontSize: 18, fontWeight: 700, color: '#2A1F1A' }}>지역화폐 가맹 음식점</p>
+          <p style={{ fontSize: 11, color: '#9E8B7E' }}>충청남도 지역화폐 사용 가능 업소 안내</p>
         </div>
       </div>
 
@@ -135,7 +127,10 @@ function TourScreen({ onNavigate }: { onNavigate: (s: AppScreen) => void }) {
         {regions.map((reg) => (
           <button
             key={reg}
-            onClick={() => setSelectedRegion(reg)}
+            onClick={() => {
+              setSelectedRegion(reg);
+              setVisibleCount(30);
+            }}
             className="px-3 py-1.5 rounded-full text-xs font-semibold whitespace-nowrap transition-all"
             style={{
               background: selectedRegion === reg ? '#C97C56' : '#EDE5DB',
@@ -149,28 +144,37 @@ function TourScreen({ onNavigate }: { onNavigate: (s: AppScreen) => void }) {
 
       <div className="flex-1 overflow-y-auto px-5 pb-5 pt-2 no-scrollbar">
         <div className="mb-3 flex items-center justify-between">
-          <p style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>{selectedRegion} 관광지 목록</p>
-          <span style={{ fontSize: 11, color: '#9E8B7E' }}>{filteredTours.length}곳</span>
+          <p style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>{selectedRegion} 가맹점 목록</p>
+          <span style={{ fontSize: 11, color: '#9E8B7E' }}>총 {filteredRestaurants.length}곳 중 표시중</span>
         </div>
-        {loading ? (
-          <div className="rounded-2xl p-6 text-center" style={{ background: '#EDE5DB', color: '#6B4C38' }}>정보를 불러오는 중입니다...</div>
-        ) : filteredTours.length === 0 ? (
-          <div className="rounded-2xl p-6 text-center" style={{ background: '#EDE5DB', color: '#6B4C38' }}>해당 지역의 등록된 관광 정보가 없습니다.</div>
+
+        {filteredRestaurants.length === 0 ? (
+          <div className="rounded-2xl p-6 text-center" style={{ background: '#EDE5DB', color: '#6B4C38' }}>해당 지역의 등록된 가맹점 정보가 없습니다.</div>
         ) : (
-          <div className="flex flex-col gap-3">
-            {filteredTours.map((t, idx) => (
+          <div className="flex flex-col gap-3 pb-10">
+            {currentList.map((t: any, idx: number) => (
               <div key={idx} className="rounded-2xl p-4" style={{ background: '#FFFFFF', boxShadow: '0 2px 10px rgba(42,31,26,0.06)' }}>
                 <div className="flex items-start justify-between">
-                  <div>
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded mr-1.5" style={{ background: '#F5EFE6', color: '#C97C56' }}>{t.시군명}</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>{t.관광지명}</span>
+                  <div className="flex items-center gap-2">
+                    <span style={{ fontSize: 15, fontWeight: 700, color: '#2A1F1A' }}>{t.사업장명 || t.업소명}</span>
                   </div>
-                  <span className="px-2 py-0.5 rounded-md" style={{ fontSize: 10, background: '#F5EFE6', color: '#C97C56', fontWeight: 600 }}>연번 {t.연번}</span>
+                  <span className="px-2 py-0.5 rounded-md" style={{ fontSize: 10, background: '#F5EFE6', color: '#C97C56', fontWeight: 600 }}>
+                    {t.업태구분명 || '일반음식점'}
+                  </span>
                 </div>
-                <p style={{ fontSize: 12, color: '#6B4C38', marginTop: 6 }}>📍 {t['관광지 주소']}</p>
-                <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 2 }}>📞 {t['관광지 연락처'] ? t['관광지 연락처'] : '연락처 정보 없음'}</p>
+                <p style={{ fontSize: 12, color: '#6B4C38', marginTop: 6 }}>📍 {t.도로명주소 || t.소재지도로명주소 || t.주소}</p>
               </div>
             ))}
+
+            {visibleCount < filteredRestaurants.length && (
+              <button
+                onClick={() => setVisibleCount(prev => prev + 30)}
+                className="w-full py-3 rounded-xl mt-2 font-bold text-sm transition-all active:scale-95"
+                style={{ background: '#EDE5DB', color: '#2A1F1A' }}
+              >
+                더보기 ({visibleCount}/{filteredRestaurants.length})
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -370,7 +374,6 @@ export default function App() {
             <div key={i} className="absolute rounded-l" style={{ left: -3, top, width: 4, height: i === 0 ? 36 : 52, background: 'linear-gradient(180deg, #2A2A2A, #222)', borderRadius: '4px 0 0 4px', boxShadow: '-2px 0 4px rgba(0,0,0,0.3)' }} />
           ))}
 
-          {/* 메인 화면 박스에 no-scrollbar 추가 */}
           <div className="absolute overflow-hidden no-scrollbar" style={{ inset: '10px 6px', borderRadius: 44, background: '#FAF8F5' }}>
             <div className="absolute z-50" style={{ top: 14, left: '50%', transform: 'translateX(-50%)', width: 116, height: 34, background: '#000', borderRadius: 20 }} />
 
@@ -437,14 +440,14 @@ export default function App() {
                 <RewardScreen
                   onBack={() => setScreen('main')}
                   onLocalCurrency={() => setScreen('localcurrency-select')} 
-                  onOpenMarketGuide={() => setScreen('tour')} 
+                  onOpenMarketGuide={() => setScreen('foodrestaurant')} 
                   totalPoints={totalPoints}
                   history={rewardHistory}
                   onNavigate={setScreen}
                 />
               )}
-              {screen === 'tour' && (
-                <TourScreen onNavigate={setScreen} />
+              {screen === 'foodrestaurant' && (
+                <FoodRestaurantScreen onNavigate={setScreen} />
               )}
               {screen === 'localcurrency' && (
                 <LocalCurrencyScreen onNavigate={setScreen} />
@@ -480,7 +483,7 @@ export default function App() {
             ['photocheck', '사진확인'],
             ['diary', '기록'],
             ['reward', '포인트'],
-            ['tour', '주요관광'],
+            ['foodrestaurant', '가맹점'],
             ['localcurrency', '관광다양성'],
             ['localcurrency-select', '화폐전환'],
             ['accountmgmt', '계정관리'],
