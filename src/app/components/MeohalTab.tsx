@@ -1,6 +1,11 @@
 import { useState, useEffect } from 'react';
 import { ChevronRight, ChevronDown, MapPin, Clock, Sparkles, Compass, Loader2 } from 'lucide-react';
 
+// 💡 로컬 JSON 파일 및 음식점 데이터 임포트
+import originalTourData from '../../data/chungnam_tours.json';
+import detailedTourData from '../../data/chungnam_tours_detailed.json';
+import { FOOD_DATA } from '../../data/food_data';
+
 interface Props { onHome: () => void; }
 
 type PersonType = 'J' | 'P' | null;
@@ -27,30 +32,186 @@ export function MeohalTab({ onHome }: Props) {
 
   const cities = ['천안시', '공주시', '보령시', '아산시', '당진시', '태안군'];
 
+  // 💡 관광 데이터와 food_data.ts의 음식점/카페 데이터를 조합하여 점심, 저녁, 카페 코스 구성
   useEffect(() => {
     if (!selected) return;
 
-    const fetchRecommendations = async () => {
+    const loadLocalData = () => {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/recommendations?type=${selected}&city=${encodeURIComponent(selectedCity)}`);
-        
-        if (!response.ok) {
-          throw new Error('서버 응답이 올바르지 않습니다.');
+        // 1. 관광 명소 데이터 병합
+        const rawTourData = [
+          ...detailedTourData,
+          ...originalTourData.map((item: any) => ({
+            ...item,
+            관광지명: item.관광지명,
+            관광지주소: item['관광지 주소'],
+            관광지연락처: item['관광지 연락처'],
+            관광지구분: '관광지',
+            관광지소개: `${item.시군명}에 위치한 매력적인 관광 명소입니다.`
+          }))
+        ];
+
+        // 선택한 시군명으로 관광지 필터링
+        let filteredTours = rawTourData.filter((item: any) => item.시군명 === selectedCity);
+
+        // 2. food_data.ts에서 선택한 도시(예: 천안시 등)에 해당하는 음식점/카페 필터링
+        const filteredFood = FOOD_DATA.filter((item: any) => 
+          item.도로명주소 && item.도로명주소.includes(selectedCity)
+        );
+
+        // 음식점과 카페 분류
+        const restaurants = filteredFood.filter((item: any) => 
+          !item.업태구분명?.includes('카페') && !item.업태구분명?.includes('다방')
+        );
+        const cafes = filteredFood.filter((item: any) => 
+          item.업태구분명?.includes('카페') || item.업태구분명?.includes('다방')
+        );
+
+        // P형일 때는 즉흥성을 위해 리스트를 랜덤하게 섞음
+        if (selected === 'P') {
+          filteredTours = [...filteredTours].sort(() => Math.random() - 0.5);
         }
 
-        const data = await response.json();
-        setCurrentPlans(data.plans || []);
+        // 기본 관광지 아이템 매핑
+        let mappedPlans: PlanItem[] = filteredTours.map((item: any, index: number) => {
+          let category = item.관광지구분 || '관광지';
+          let emoji = '🏛️';
+          const name = item.관광지명 || '';
+          
+          if (name.includes('식당') || name.includes('국밥') || name.includes('회관') || name.includes('음식')) {
+            category = '식당';
+            emoji = '🍽️';
+          } else if (name.includes('카페') || name.includes('커피')) {
+            category = '카페';
+            emoji = '☕';
+          } else {
+            const emojis = ['🏛️', '🌿', '🌊', '⛩️', '📸', '🌲'];
+            emoji = emojis[index % emojis.length];
+          }
+
+          return {
+            id: (item.연번 || index) + index * 1000,
+            time: selected === 'J' ? `${9 + (index * 2) % 10}:00 - ${11 + (index * 2) % 10}:00` : undefined,
+            badge: selected === 'J' ? `코스 ${index + 1}` : '티맵 핫플',
+            title: name,
+            desc: item.관광지소개 || `${item.시군명}의 매력적인 공간입니다.`,
+            addr: item.관광지주소 || '주소 정보 없음',
+            emoji,
+            category
+          };
+        });
+
+        // 3. food_data 기반 점심, 저녁, 카페 항목을 코스 중간중간에 삽입 (데이터가 있는 경우)
+        const lunchSpot = restaurants[0];
+        const cafeSpot = cafes[0] || restaurants[1];
+        const dinnerSpot = restaurants[2] || restaurants[1];
+
+        if (selected === 'J') {
+          // J형(계획형): 시간대별(점심, 카페, 저녁) 코스로 재구성
+          const structuredPlans: PlanItem[] = [];
+          
+          if (mappedPlans.length > 0) {
+            structuredPlans.push({ ...mappedPlans[0], time: '10:00 - 11:30', badge: '오전 코스', category: '관광지' });
+          }
+
+          if (lunchSpot) {
+            structuredPlans.push({
+              id: 99991,
+              time: '12:00 - 13:30',
+              badge: '점심 식사',
+              title: lunchSpot.사업장명,
+              desc: `${selectedCity} 추천 맛집 (${lunchSpot.업태구분명})`,
+              addr: lunchSpot.도로명주소,
+              emoji: '🍽️',
+              category: '식당'
+            });
+          }
+
+          if (mappedPlans.length > 1) {
+            structuredPlans.push({ ...mappedPlans[1], time: '14:00 - 15:30', badge: '오후 코스', category: '관광지' });
+          }
+
+          if (cafeSpot) {
+            structuredPlans.push({
+              id: 99992,
+              time: '16:00 - 17:00',
+              badge: '디저트 카페',
+              title: cafeSpot.사업장명,
+              desc: `${selectedCity} 분위기 좋은 카페/디저트`,
+              addr: cafeSpot.도로명주소,
+              emoji: '☕',
+              category: '카페'
+            });
+          }
+
+          if (dinnerSpot) {
+            structuredPlans.push({
+              id: 99993,
+              time: '18:00 - 19:30',
+              badge: '저녁 식사',
+              title: dinnerSpot.사업장명,
+              desc: `${selectedCity} 저녁 추천 맛집 (${dinnerSpot.업태구분명})`,
+              addr: dinnerSpot.도로명주소,
+              emoji: '🍖',
+              category: '식당'
+            });
+          }
+
+          if (structuredPlans.length > 0) {
+            mappedPlans = structuredPlans;
+          }
+        } else {
+          // P형(즉흥형): 핫플 목록에 맛집과 카페를 골고루 섞어줌
+          const foodItems: PlanItem[] = [];
+          if (lunchSpot) {
+            foodItems.push({
+              id: 88881,
+              badge: '티맵 인기 맛집',
+              title: lunchSpot.사업장명,
+              desc: `${selectedCity} 실시간 추천 맛집`,
+              addr: lunchSpot.도로명주소,
+              emoji: '🍽️',
+              category: '식당'
+            });
+          }
+          if (cafeSpot) {
+            foodItems.push({
+              id: 88882,
+              badge: '티맵 인기 카페',
+              title: cafeSpot.사업장명,
+              desc: `${selectedCity} 핫한 감성 카페`,
+              addr: cafeSpot.도로명주소,
+              emoji: '☕',
+              category: '카페'
+            });
+          }
+          if (dinnerSpot) {
+            foodItems.push({
+              id: 88883,
+              badge: '티맵 인기 맛집',
+              title: dinnerSpot.사업장명,
+              desc: `${selectedCity} 저녁 핫플레이스`,
+              addr: dinnerSpot.도로명주소,
+              emoji: '🍷',
+              category: '식당'
+            });
+          }
+          // 관광지와 맛집/카페를 섞어서 배치
+          mappedPlans = [...foodItems, ...mappedPlans].slice(0, 8);
+        }
+
+        setCurrentPlans(mappedPlans);
       } catch (err) {
-        setError('데이터를 불러오는 중 오류가 발생했습니다. 백엔드 서버 및 인증키를 확인해주세요.');
+        setError('데이터를 불러오는 중 오류가 발생했습니다.');
         setCurrentPlans([]);
       } finally {
         setLoading(false);
       }
     };
 
-    fetchRecommendations();
+    loadLocalData();
   }, [selected, selectedCity]);
 
   const toggleExpand = (id: number) => {
@@ -163,18 +324,18 @@ export function MeohalTab({ onHome }: Props) {
             <div className="flex items-center gap-1.5">
               {selected === 'J' ? <Clock size={16} color="#C97C56" /> : <Sparkles size={16} color="#C97C56" />}
               <p style={{ fontSize: 15, fontWeight: 700, color: '#2A1F1A' }}>
-                {selectedCity} {selected === 'J' ? 'J형 계획형 코스' : 'P형 티맵 핫플 코스'}
+                {selectedCity} {selected === 'J' ? 'J형 계획형 코스 (점심·저녁·카페 포함)' : 'P형 티맵 핫플 코스'}
               </p>
             </div>
             <span className="px-2.5 py-1 rounded-full" style={{ background: '#F0EAE2', fontSize: 10, fontWeight: 600, color: '#C97C56' }}>
-              {selected === 'J' ? '계획형 맞춤' : '즉흥형 핫플'}
+              {selected === 'J' ? '시간별 맞춤 코스' : '즉흥형 핫플'}
             </span>
           </div>
 
           {loading && (
             <div className="flex flex-col items-center justify-center py-12 gap-3">
               <Loader2 className="animate-spin" size={28} color="#C97C56" />
-              <p style={{ fontSize: 13, color: '#9E8B7E' }}>공공데이터 API 정보를 불러오는 중...</p>
+              <p style={{ fontSize: 13, color: '#9E8B7E' }}>맛집 및 관광 데이터를 조합하는 중...</p>
             </div>
           )}
 
@@ -186,7 +347,7 @@ export function MeohalTab({ onHome }: Props) {
 
           {!loading && !error && currentPlans.length === 0 && (
             <div className="rounded-2xl p-8 text-center bg-white border border-stone-100">
-              <p style={{ fontSize: 13, color: '#9E8B7E' }}>조회된 관광 데이터가 없습니다. 지역 시군구 코드를 확인해주세요.</p>
+              <p style={{ fontSize: 13, color: '#9E8B7E' }}>조회된 데이터가 없습니다.</p>
             </div>
           )}
 
