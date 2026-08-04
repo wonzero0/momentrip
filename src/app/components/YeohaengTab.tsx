@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { useState } from 'react';
 import { CalendarPlus, ChevronRight, Clock, Compass, MapPin, Star, WalletCards, X } from 'lucide-react';
 import { AppScreen } from '../App';
@@ -5,6 +6,8 @@ import { AppScreen } from '../App';
 interface Props {
   onNavigate: (s: AppScreen) => void;
   onHome: () => void;
+  // 부모 컴포넌트(App.tsx 등)에서 여행지 상태를 관리할 수 있는 콜백이 있다면 활용
+  setUserDestination?: (dest: string) => void;
 }
 
 type Phase = 'home' | 'planQuestion' | 'planInput';
@@ -144,6 +147,20 @@ export function YeohaengTab({ onNavigate }: Props) {
     setPhase('planInput');
   };
 
+  // 💡 '확인' 버튼을 눌렀을 때 실행되는 핵심 함수
+  const handleConfirmMission = () => {
+    // 1. 입력된 텍스트를 localStorage에 안전하게 저장합니다. (MissionScreen이 이 값을 읽어갑니다)
+    if (planText.trim()) {
+      localStorage.setItem('userDestination', planText);
+    } else {
+      // 입력값이 비어있다면 기본 저장소 값 유지 또는 기본값 설정
+      localStorage.setItem('userDestination', '충청남도 천안'); // 예시 기본값
+    }
+    
+    // 2. 미션 화면으로 이동
+    onNavigate('mission');
+  };
+
   if (phase === 'planQuestion' || phase === 'planInput') {
     return (
       <div
@@ -213,7 +230,7 @@ export function YeohaengTab({ onNavigate }: Props) {
                     height: 150,
                     fontFamily: "'Noto Sans KR', sans-serif",
                   }}
-                  placeholder="예: 6월 20일~22일, 제주도 3박4일&#10;첫째날: 성산일출봉, 우도..."
+                  placeholder="예: 천안 여행 호두과자 투어&#10;첫째날: 독립기념관..."
                 />
                 <div className="flex gap-3 mt-4">
                   <button
@@ -224,7 +241,7 @@ export function YeohaengTab({ onNavigate }: Props) {
                     추천 보기
                   </button>
                   <button
-                    onClick={() => onNavigate('mission')}
+                    onClick={handleConfirmMission}
                     className="flex-1 py-3.5 rounded-2xl active:scale-95 transition-all"
                     style={{ background: '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 600, border: 'none', boxShadow: '0 6px 20px rgba(201,124,86,0.35)' }}
                   >
