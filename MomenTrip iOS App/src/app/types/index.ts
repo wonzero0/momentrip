@@ -33,6 +33,7 @@ export interface MissionStatus {
   icon: string;
   title: string;
   desc: string;
+  reward?: number;
   completed: boolean;
   completedAt: string | null;
   photoId: string | null;
@@ -45,6 +46,8 @@ export interface RewardTransaction {
   amount: number;
   title: string;
   desc: string;
+  missionId?: number | null;
+  roomId?: string | null;
   createdAt: string;
 }
 
@@ -63,6 +66,7 @@ export interface TravelPhoto {
   date: string;
   dataUrl: string;
   source: string;
+  roomId?: string | null;
   filename?: string | null;
   uploadPath?: string | null;
   mimeType?: string | null;
@@ -76,6 +80,7 @@ export interface DiaryEntry {
   title: string;
   text: string;
   photoIds: string[];
+  imageDataUrl?: string | null;
   createdAt: string;
   updatedAt: string;
 }

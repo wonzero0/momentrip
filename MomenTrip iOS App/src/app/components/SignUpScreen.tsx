@@ -1,13 +1,15 @@
+import { supabaseRequested } from '../../lib/supabase';
 import { useState } from 'react';
 import { ChevronLeft, Eye, EyeOff, CheckCircle2 } from 'lucide-react';
 import { AppScreen } from '../App';
-import { auth } from '../../firebase'; 
-import { createUserWithEmailAndPassword, fetchSignInMethodsForEmail } from 'firebase/auth';
-import { idToAuthEmail, isValidLoginId } from '../lib/authId';
+import { api } from '../lib/api';
+import { isValidLoginId } from '../lib/authId';
 
 interface Props {
   onNavigate: (s: AppScreen) => void;
 }
+
+const PROFILE_KEY = 'momentrip.accountProfile';
 
 export function SignUpScreen({ onNavigate }: Props) {
   const [id, setId] = useState('');
@@ -16,37 +18,39 @@ export function SignUpScreen({ onNavigate }: Props) {
   const [showPw, setShowPw] = useState(false);
   const [showPwC, setShowPwC] = useState(false);
   const [idChecked, setIdChecked] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleCheckDuplicate = async () => {
     if (!isValidLoginId(id)) {
-      alert("아이디는 3자 이상 입력해 주세요.");
+      alert('아이디는 3~40자의 한글, 영문, 숫자, 마침표, 밑줄, 하이픈만 사용할 수 있습니다.');
       return;
     }
 
     try {
-      const methods = await fetchSignInMethodsForEmail(auth, idToAuthEmail(id));
-      if (methods.length > 0) {
+      setChecking(true);
+      const available = await api.checkUsername(id);
+      if (!available) {
         setIdChecked(false);
         alert("이미 사용 중인 아이디입니다.");
         return;
       }
       setIdChecked(true);
-    } catch (error: any) {
-      console.error("아이디 중복확인 에러:", error.code);
-      alert("아이디 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.");
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '아이디 확인 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setChecking(false);
     }
   };
 
-  // Firebase 실제 회원가입 처리 함수 추가
   const handleSignUp = async () => {
-    // 1. 유효성 검사 (입력 폼 체크)
     if (!id.trim() || !pw || !pwConfirm) {
       alert("모든 필드를 입력해 주세요.");
       return;
     }
 
     if (!isValidLoginId(id)) {
-      alert("아이디는 3자 이상 입력해 주세요.");
+      alert('아이디는 3~40자의 한글, 영문, 숫자, 마침표, 밑줄, 하이픈만 사용할 수 있습니다.');
       return;
     }
 
@@ -60,25 +64,25 @@ export function SignUpScreen({ onNavigate }: Props) {
       return;
     }
 
+    if (pw.length < 6 || pw.length > 72) {
+      alert('비밀번호는 6~72자로 입력해 주세요.');
+      return;
+    }
+
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, idToAuthEmail(id), pw);
-      console.log("🎉 회원가입 성공 유저:", userCredential.user);
-      
-      alert("회원가입이 완료되었습니다! 로그인 페이지로 이동합니다.");
-      onNavigate('login'); // 가입 성공 후 로그인 화면으로 전환
-    } catch (error: any) {
-      console.error("회원가입 에러 발생:", error.code);
-      
-      // Firebase 주요 에러 한글 예외 처리
-      if (error.code === 'auth/email-already-in-use') {
-        alert("이미 사용 중인 아이디입니다.");
-      } else if (error.code === 'auth/invalid-email') {
-        alert("아이디에 사용할 수 없는 문자가 포함되어 있습니다.");
-      } else if (error.code === 'auth/weak-password') {
-        alert("비밀번호가 지나치게 취약합니다. (6자리 이상 입력)");
-      } else {
-        alert("회원가입 중 오류가 발생했습니다: " + error.message);
-      }
+      setLoading(true);
+      const user = await api.signup(id, pw, '여행자님');
+      if (!supabaseRequested) localStorage.setItem(PROFILE_KEY, JSON.stringify({
+        displayName: user.displayName || '여행자님',
+        userCode: user.code || '#0000',
+        photoDataUrl: null,
+      }));
+      alert("회원가입이 완료되었습니다!");
+      onNavigate('main');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '회원가입 중 오류가 발생했습니다.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -120,6 +124,9 @@ export function SignUpScreen({ onNavigate }: Props) {
                 style={{ height: 54, background: '#F0EAE2', flex: '1 1 0', minWidth: 0 }}
               >
                 <input
+                  autoCapitalize="none"
+                  autoComplete="username"
+                  maxLength={40}
                   className="flex-1 bg-transparent outline-none"
                   style={{ fontSize: 15, color: '#2A1F1A', minWidth: 0 }}
                   placeholder="아이디"
@@ -129,19 +136,21 @@ export function SignUpScreen({ onNavigate }: Props) {
                 {idChecked && <CheckCircle2 size={18} color="#C97C56" />}
               </div>
               <button
+                type="button"
                 onClick={handleCheckDuplicate}
+                disabled={checking}
                 className="rounded-2xl active:scale-95 transition-all flex-shrink-0"
                 style={{
                   height: 54,
                   width: 82,
                   fontSize: 12,
                   fontWeight: 600,
-                  background: idChecked ? '#EDE5DB' : '#2A1F1A',
+                  background: idChecked || checking ? '#EDE5DB' : '#2A1F1A',
                   color: idChecked ? '#9E8B7E' : '#FAF8F5',
                   whiteSpace: 'nowrap',
                 }}
               >
-                {idChecked ? '확인됨' : '중복확인'}
+                {checking ? '확인중' : idChecked ? '확인됨' : '중복확인'}
               </button>
             </div>
             {idChecked && (
@@ -161,6 +170,8 @@ export function SignUpScreen({ onNavigate }: Props) {
               style={{ height: 54, background: '#F0EAE2' }}
             >
               <input
+                autoComplete="new-password"
+                maxLength={72}
                 className="flex-1 bg-transparent outline-none"
                 style={{ fontSize: 15, color: '#2A1F1A' }}
                 placeholder="비밀번호를 입력하세요"
@@ -184,6 +195,8 @@ export function SignUpScreen({ onNavigate }: Props) {
               style={{ height: 54, background: '#F0EAE2' }}
             >
               <input
+                autoComplete="new-password"
+                maxLength={72}
                 className="flex-1 bg-transparent outline-none"
                 style={{ fontSize: 15, color: '#2A1F1A' }}
                 placeholder="비밀번호를 다시 입력하세요"
@@ -203,20 +216,21 @@ export function SignUpScreen({ onNavigate }: Props) {
           </div>
         </div>
 
-        {/* 🌟 기존 목업 전환 방식에서 handleSignUp 함수 호출로 변경 */}
         <button
+          type="button"
           onClick={handleSignUp}
+          disabled={loading}
           className="mt-10 w-full py-4 rounded-2xl transition-all active:scale-95"
           style={{
             fontSize: 16,
             fontWeight: 600,
-            background: '#C97C56',
+            background: loading ? '#CDBEB2' : '#C97C56',
             color: '#FFFFFF',
             border: 'none',
-            boxShadow: '0 8px 24px rgba(201,124,86,0.35)',
+            boxShadow: loading ? 'none' : '0 8px 24px rgba(201,124,86,0.35)',
           }}
         >
-          확인
+          {loading ? '가입 중...' : '확인'}
         </button>
 
         <div className="flex items-center justify-center gap-2 mt-6">

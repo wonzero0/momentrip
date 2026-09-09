@@ -1,6 +1,7 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { initializeFirestore } from 'firebase/firestore';
+import { supabaseRequested } from '../../lib/supabase';
+import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { getAuth, type Auth } from 'firebase/auth';
+import { initializeFirestore, type Firestore } from 'firebase/firestore';
 
 export const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -52,8 +53,19 @@ export function firebaseTargetLabel() {
 
 export const firestoreTransportMode = 'force-long-polling';
 
-export const firebaseApp = initializeApp(firebaseConfig);
-export const auth = getAuth(firebaseApp);
-export const db = initializeFirestore(firebaseApp, {
-  experimentalForceLongPolling: true,
-});
+const firebaseBackendEnabled =
+  !supabaseRequested && !String(import.meta.env.VITE_API_BASE_URL || '').trim() && missingFirebaseEnv.length === 0;
+
+// The local Node API is the primary backend for the iOS build. Avoid starting
+// Firebase Auth and Firestore (and their network traffic) when that API is set.
+export const firebaseApp = (
+  firebaseBackendEnabled ? initializeApp(firebaseConfig) : null
+) as FirebaseApp;
+export const auth = (
+  firebaseBackendEnabled ? getAuth(firebaseApp) : null
+) as Auth;
+export const db = (
+  firebaseBackendEnabled
+    ? initializeFirestore(firebaseApp, { experimentalForceLongPolling: true })
+    : null
+) as Firestore;

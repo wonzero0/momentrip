@@ -1,29 +1,34 @@
-import { useState } from 'react';
+import { supabaseRequested } from '../lib/supabase';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { IntroScreen } from './components/IntroScreen';
-import { LoginScreen } from './components/LoginScreen';
-import { SignUpScreen } from './components/SignUpScreen';
-import { MainApp } from './components/MainApp';
-import { MissionScreen } from './components/MissionScreen';
-import { DiaryScreen } from './components/DiaryScreen';
-import { PhotoAccuracyScreen } from './components/PhotoAccuracyScreen';
-import { RewardScreen } from './components/RewardScreen';
-import { LocalCurrencyScreen } from './components/LocalCurrencyScreen';
-import { AccountMgmtScreen } from './components/AccountMgmtScreen';
-import { NotificationSettingsScreen } from './components/NotificationSettingsScreen';
-import { AppInfoScreen } from './components/AppInfoScreen';
-import { ContactScreen } from './components/ContactScreen';
-import { auth } from '../firebase';
-import { signOut } from 'firebase/auth';
+import type { MissionStatus, RewardSummary, RewardTransaction, TripRoom } from './types';
 
-export type AppScreen = 'intro' | 'login' | 'signup' | 'main' | 'mission' | 'diary' | 'photocheck' | 'reward' | 'localcurrency' | 'accountmgmt' | 'notifications' | 'appinfo' | 'contact';
+const LoginScreen = lazy(() => import('./components/LoginScreen').then((module) => ({ default: module.LoginScreen })));
+const SignUpScreen = lazy(() => import('./components/SignUpScreen').then((module) => ({ default: module.SignUpScreen })));
+const MainApp = lazy(() => import('./components/MainApp').then((module) => ({ default: module.MainApp })));
+const MissionScreen = lazy(() => import('./components/MissionScreen').then((module) => ({ default: module.MissionScreen })));
+const DiaryScreen = lazy(() => import('./components/DiaryScreen').then((module) => ({ default: module.DiaryScreen })));
+const PhotoAccuracyScreen = lazy(() => import('./components/PhotoAccuracyScreen').then((module) => ({ default: module.PhotoAccuracyScreen })));
+const RewardScreen = lazy(() => import('./components/RewardScreen').then((module) => ({ default: module.RewardScreen })));
+const LocalCurrencyScreen = lazy(() => import('./components/LocalCurrencyScreen').then((module) => ({ default: module.LocalCurrencyScreen })));
+const FoodRestaurantScreen = lazy(() => import('./components/FoodRestaurantScreen').then((module) => ({ default: module.FoodRestaurantScreen })));
+const TourDiversityScreen = lazy(() => import('./components/TourDiversityScreen').then((module) => ({ default: module.TourDiversityScreen })));
+const LocalCurrencyExchangeScreen = lazy(() => import('./components/LocalCurrencyExchangeScreen').then((module) => ({ default: module.LocalCurrencyExchangeScreen })));
+const AccountMgmtScreen = lazy(() => import('./components/AccountMgmtScreen').then((module) => ({ default: module.AccountMgmtScreen })));
+const NotificationSettingsScreen = lazy(() => import('./components/NotificationSettingsScreen').then((module) => ({ default: module.NotificationSettingsScreen })));
+const AppInfoScreen = lazy(() => import('./components/AppInfoScreen').then((module) => ({ default: module.AppInfoScreen })));
+const ContactScreen = lazy(() => import('./components/ContactScreen').then((module) => ({ default: module.ContactScreen })));
+
+export type AppScreen = 'intro' | 'login' | 'signup' | 'main' | 'mission' | 'diary' | 'photocheck' | 'reward' | 'localcurrency' | 'foodrestaurant' | 'tourdiversity' | 'localcurrencyexchange' | 'accountmgmt' | 'notifications' | 'appinfo' | 'contact';
 export type TabType = 'yeohaeng' | 'gati' | 'meohal' | 'gieong';
-export type DiaryType = 'diary' | 'fourcut' | null;
+export type DiaryType = 'scrapbook' | 'fourcut' | null;
 
 export interface MissionInfo {
   id: number;
   title: string;
   reward: number;
   icon: string;
+  desc?: string;
 }
 
 export interface RewardHistoryItem {
@@ -33,11 +38,43 @@ export interface RewardHistoryItem {
   earned: number;
   used: number;
   missionId?: number;
+  roomId?: string | null;
   photoDataUrl?: string | null;
 }
 
 const CAPTURED_MISSIONS_KEY = 'momentrip.capturedMissions';
 const REWARD_HISTORY_KEY = 'momentrip.rewardHistory';
+const ACTIVE_TRIP_KEY = 'momentrip.activeTrip';
+
+async function loadApi() {
+  return (await import('./lib/api')).api;
+}
+
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function LoadingScreen() {
+  return (
+    <div className="w-full h-full flex items-center justify-center" style={{ background: '#FAF8F5' }}>
+      <div className="flex flex-col items-center gap-3" role="status" aria-live="polite">
+        <div
+          className="w-8 h-8 rounded-full animate-spin"
+          style={{ border: '3px solid #EDE5DB', borderTopColor: '#C97C56' }}
+        />
+        <span style={{ color: '#8B6148', fontSize: 13 }}>화면을 준비하고 있어요</span>
+      </div>
+    </div>
+  );
+}
+
+function tripScopeId(roomId?: string | null) {
+  return roomId || 'default';
+}
+
+function capturedMissionsKey(roomId?: string | null) {
+  return `${CAPTURED_MISSIONS_KEY}.${tripScopeId(roomId)}`;
+}
 
 function readStoredNumberArray(key: string) {
   try {
@@ -57,12 +94,61 @@ function readStoredRewardHistory() {
   }
 }
 
-function saveCapturedMissions(ids: number[]) {
-  localStorage.setItem(CAPTURED_MISSIONS_KEY, JSON.stringify(ids));
+function readActiveTrip() {
+  try {
+    const value = localStorage.getItem(ACTIVE_TRIP_KEY);
+    return value ? JSON.parse(value) as TripRoom : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveTrip(room: TripRoom | null) {
+  if (!room) {
+    localStorage.removeItem(ACTIVE_TRIP_KEY);
+    return;
+  }
+  localStorage.setItem(ACTIVE_TRIP_KEY, JSON.stringify(room));
+}
+
+function readCapturedMissions(roomId?: string | null) {
+  const scopedKey = capturedMissionsKey(roomId);
+  const scopedValue = localStorage.getItem(scopedKey);
+  if (scopedValue !== null) return readStoredNumberArray(scopedKey);
+
+  return roomId ? [] : readStoredNumberArray(CAPTURED_MISSIONS_KEY);
+}
+
+function saveCapturedMissions(ids: number[], roomId?: string | null) {
+  localStorage.setItem(capturedMissionsKey(roomId), JSON.stringify(ids));
+  if (!roomId) localStorage.setItem(CAPTURED_MISSIONS_KEY, JSON.stringify(ids));
 }
 
 function saveRewardHistory(history: RewardHistoryItem[]) {
   localStorage.setItem(REWARD_HISTORY_KEY, JSON.stringify(history));
+}
+
+function missionStatusesToCaptured(missions: MissionStatus[]) {
+  return missions.filter((mission) => mission.completed).map((mission) => mission.id);
+}
+
+function rewardTransactionToHistory(item: RewardTransaction): RewardHistoryItem {
+  const amount = Number(item.amount || 0);
+  return {
+    id: item.id,
+    date: item.createdAt ? item.createdAt.slice(0, 10).replaceAll('-', '.') : todayLabel(),
+    mission: item.title || item.desc || '포인트 거래',
+    earned: amount > 0 ? amount : 0,
+    used: amount < 0 ? Math.abs(amount) : 0,
+    missionId: item.missionId ?? undefined,
+    roomId: item.roomId ?? null,
+  };
+}
+
+function rewardSummaryToHistory(summary: RewardSummary) {
+  return summary.transactions
+    .filter((item) => item.category === 'points')
+    .map(rewardTransactionToHistory);
 }
 
 function todayLabel() {
@@ -74,29 +160,59 @@ function todayLabel() {
 }
 
 export default function App() {
+  const initialActiveTrip = readActiveTrip();
   const [screen, setScreen] = useState<AppScreen>('intro');
   const [activeTab, setActiveTab] = useState<TabType>('yeohaeng');
   const [diaryType, setDiaryType] = useState<DiaryType>(null);
   const [selectedMission, setSelectedMission] = useState<MissionInfo | null>(null);
-  const [capturedMissions, setCapturedMissions] = useState<number[]>(() => readStoredNumberArray(CAPTURED_MISSIONS_KEY));
+  const [activeTrip, setActiveTrip] = useState<TripRoom | null>(initialActiveTrip);
+  const [capturedMissions, setCapturedMissions] = useState<number[]>(() => readCapturedMissions(initialActiveTrip?.id));
   const [rewardHistory, setRewardHistory] = useState<RewardHistoryItem[]>(readStoredRewardHistory);
 
   const totalPoints = rewardHistory.reduce((sum, item) => sum + item.earned - item.used, 0);
   const earnedByMission = rewardHistory.reduce<Record<number, number>>((acc, item) => {
-    if (item.missionId && item.earned > 0) acc[item.missionId] = item.earned;
+    if (item.missionId && item.earned > 0 && (item.roomId ?? null) === (activeTrip?.id ?? null)) acc[item.missionId] = item.earned;
     return acc;
   }, {});
 
-  const handleCaptureMission = (mission: MissionInfo, earned: number, photoDataUrl?: string | null) => {
+  const applyRemoteState = useCallback((missions: MissionStatus[], rewards: RewardSummary, roomId = activeTrip?.id ?? null) => {
+    const nextCaptured = missionStatusesToCaptured(missions);
+    const nextHistory = rewardSummaryToHistory(rewards);
+
+    setCapturedMissions(nextCaptured);
+    setRewardHistory(nextHistory);
+    saveCapturedMissions(nextCaptured, roomId);
+    saveRewardHistory(nextHistory);
+  }, [activeTrip?.id]);
+
+  const refreshRemoteState = useCallback(async () => {
+    try {
+      const api = await loadApi();
+      const user = await api.me();
+      if (!user) return;
+      const [missions, rewards] = await Promise.all([api.missions(activeTrip?.id), api.rewards()]);
+      applyRemoteState(missions, rewards, activeTrip?.id ?? null);
+    } catch (error) {
+      console.warn('서버 상태 동기화 실패:', error);
+    }
+  }, [activeTrip?.id, applyRemoteState]);
+
+  useEffect(() => {
+    if (['main', 'mission', 'reward', 'localcurrency', 'foodrestaurant', 'tourdiversity', 'localcurrencyexchange'].includes(screen)) {
+      void refreshRemoteState();
+    }
+  }, [refreshRemoteState, screen]);
+
+  const saveMissionLocally = (mission: MissionInfo, earned: number, photoDataUrl?: string | null) => {
     setCapturedMissions(prev => {
       if (prev.includes(mission.id)) return prev;
       const next = [...prev, mission.id];
-      saveCapturedMissions(next);
+      saveCapturedMissions(next, activeTrip?.id);
       return next;
     });
 
     setRewardHistory(prev => {
-      if (prev.some(item => item.missionId === mission.id && item.earned > 0)) return prev;
+      if (prev.some(item => item.missionId === mission.id && item.earned > 0 && (item.roomId ?? null) === (activeTrip?.id ?? null))) return prev;
       const next = [
         {
           id: `reward-${mission.id}-${Date.now()}`,
@@ -105,6 +221,7 @@ export default function App() {
           earned,
           used: 0,
           missionId: mission.id,
+          roomId: activeTrip?.id ?? null,
           photoDataUrl: photoDataUrl ?? null,
         },
         ...prev,
@@ -114,276 +231,193 @@ export default function App() {
     });
   };
 
+  const handleCaptureMission = async (mission: MissionInfo, earned: number, photoDataUrl?: string | null) => {
+    try {
+      const api = await loadApi();
+      const photo = photoDataUrl
+        ? await api.uploadPhoto({
+            dataUrl: photoDataUrl,
+            label: mission.title,
+            date: todayIsoDate(),
+            source: activeTrip?.id ? `mission:${activeTrip.id}:${mission.id}` : `mission:${mission.id}`,
+            roomId: activeTrip?.id ?? null,
+          })
+        : null;
+      const result = await api.completeMission(mission.id, photo?.id, earned, activeTrip?.id, mission.title);
+      applyRemoteState(result.missions, result.rewards, activeTrip?.id ?? null);
+      return;
+    } catch (error) {
+      if (supabaseRequested) throw error;
+      console.warn('미션 서버 저장 실패, 로컬 저장으로 대체:', error);
+      saveMissionLocally(mission, earned, photoDataUrl);
+    }
+  };
+
+  const saveLocalCurrencyConversionLocally = (amount: number, regionName: string, currency: string) => {
+    setRewardHistory(prev => {
+      const currentPoints = prev.reduce((sum, item) => sum + item.earned - item.used, 0);
+      if (amount <= 0 || amount > currentPoints) return prev;
+
+      const next = [
+        {
+          id: `currency-${Date.now()}`,
+          date: todayLabel(),
+          mission: `${regionName} ${currency} 전환`,
+          earned: 0,
+          used: amount,
+        },
+        ...prev,
+      ];
+      saveRewardHistory(next);
+      return next;
+    });
+  };
+
+  const handleLocalCurrencyConversion = async (amount: number, regionName: string, currency: string) => {
+    try {
+      const api = await loadApi();
+      const result = await api.convertLocalCurrency({ amount, regionName, currency });
+      setRewardHistory(rewardSummaryToHistory(result.rewards));
+      saveRewardHistory(rewardSummaryToHistory(result.rewards));
+    } catch (error) {
+      if (supabaseRequested) throw error;
+      console.warn('지역화폐 전환 서버 저장 실패, 로컬 저장으로 대체:', error);
+      saveLocalCurrencyConversionLocally(amount, regionName, currency);
+    }
+  };
+
   const handleLogout = async () => {
     try {
-      await signOut(auth);
+      const api = await loadApi();
+      await api.logout();
     } catch (error) {
       console.error('로그아웃 실패:', error);
     } finally {
+      setCapturedMissions([]);
+      setRewardHistory([]);
+      setActiveTrip(null);
+      saveActiveTrip(null);
+      saveCapturedMissions([], null);
+      saveRewardHistory([]);
       setSelectedMission(null);
       setDiaryType(null);
       setScreen('intro');
     }
   };
 
-  const isIntro = screen === 'intro';
+  const handleTripStarted = useCallback((room: TripRoom) => {
+    setActiveTrip(room);
+    saveActiveTrip(room);
+    setCapturedMissions(readCapturedMissions(room.id));
+    setSelectedMission(null);
+    setDiaryType(null);
+  }, []);
+
+  const renderScreen = () => {
+    if (screen === 'intro') return <IntroScreen onNavigate={setScreen} />;
+    if (screen === 'login') return <LoginScreen onNavigate={setScreen} />;
+    if (screen === 'signup') return <SignUpScreen onNavigate={setScreen} />;
+    if (screen === 'main') {
+      return (
+        <MainApp
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          onNavigate={setScreen}
+          totalPoints={totalPoints}
+          onLogout={handleLogout}
+          activeTrip={activeTrip}
+          onTripStarted={handleTripStarted}
+        />
+      );
+    }
+    if (screen === 'mission') {
+      return (
+        <MissionScreen
+          onNavigate={setScreen}
+          setDiaryType={setDiaryType}
+          setSelectedMission={setSelectedMission}
+          captured={capturedMissions}
+          earnedByMission={earnedByMission}
+          activeTrip={activeTrip}
+        />
+      );
+    }
+    if (screen === 'diary') {
+      return (
+        <DiaryScreen
+          diaryType={diaryType}
+          setDiaryType={setDiaryType}
+          onNavigate={setScreen}
+          activeTrip={activeTrip}
+        />
+      );
+    }
+    if (screen === 'photocheck') {
+      return (
+        <PhotoAccuracyScreen
+          mission={selectedMission}
+          onBack={() => setScreen('mission')}
+          onConfirm={async (earned, photoDataUrl) => {
+            if (selectedMission) await handleCaptureMission(selectedMission, earned, photoDataUrl);
+            setScreen('mission');
+          }}
+        />
+      );
+    }
+    if (screen === 'reward') {
+      return (
+        <RewardScreen
+          onBack={() => setScreen('main')}
+          onLocalCurrency={() => setScreen('localcurrencyexchange')}
+          onOpenMarketGuide={() => setScreen('foodrestaurant')}
+          onOpenTourDiversity={() => setScreen('tourdiversity')}
+          totalPoints={totalPoints}
+          history={rewardHistory}
+        />
+      );
+    }
+    if (screen === 'localcurrency') {
+      return <LocalCurrencyScreen onBack={() => setScreen('reward')} totalPoints={totalPoints} />;
+    }
+    if (screen === 'foodrestaurant') return <FoodRestaurantScreen onBack={() => setScreen('reward')} />;
+    if (screen === 'tourdiversity') return <TourDiversityScreen onBack={() => setScreen('reward')} />;
+    if (screen === 'localcurrencyexchange') {
+      return (
+        <LocalCurrencyExchangeScreen
+          onBack={() => setScreen('reward')}
+          totalPoints={totalPoints}
+          onConvert={handleLocalCurrencyConversion}
+        />
+      );
+    }
+    if (screen === 'accountmgmt') return <AccountMgmtScreen onBack={() => setScreen('main')} />;
+    if (screen === 'notifications') return <NotificationSettingsScreen onBack={() => setScreen('main')} />;
+    if (screen === 'appinfo') return <AppInfoScreen onBack={() => setScreen('main')} />;
+    return <ContactScreen onBack={() => setScreen('main')} />;
+  };
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center"
+      className="w-screen overflow-hidden flex justify-center"
       style={{
-        background: 'linear-gradient(145deg, #E8DDD5 0%, #D8CCB8 50%, #C8B89A 100%)',
+        height: '100dvh',
+        background: '#EDE5DB',
         fontFamily: "'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif",
-        padding: '24px 16px',
       }}
     >
-      {/* App label above phone */}
-      <div className="flex flex-col items-center gap-6">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: '#C97C56' }}>
-            <span style={{ fontSize: 16 }}>✈️</span>
-          </div>
-          <span style={{ fontSize: 16, fontWeight: 700, color: '#2A1F1A', letterSpacing: '-0.02em' }}>
-            MomenTrip · 모먼트립
-          </span>
-        </div>
-
-        {/* Phone shell */}
-        <div
-          className="relative flex-shrink-0"
-          style={{
-            width: 375,
-            height: 812,
-          }}
-        >
-          {/* Phone outer case */}
-          <div
-            className="absolute inset-0 rounded-[50px]"
-            style={{
-              background: 'linear-gradient(175deg, #303030 0%, #1A1A1A 100%)',
-              boxShadow: [
-                '0 60px 120px rgba(0,0,0,0.5)',
-                '0 0 0 1.5px rgba(255,255,255,0.08)',
-                'inset 0 1px 0 rgba(255,255,255,0.12)',
-              ].join(', '),
-            }}
-          />
-
-          {/* Side button (right) */}
-          <div
-            className="absolute rounded-r"
-            style={{
-              right: -3,
-              top: 200,
-              width: 4,
-              height: 72,
-              background: 'linear-gradient(180deg, #2A2A2A, #222)',
-              borderRadius: '0 4px 4px 0',
-              boxShadow: '2px 0 4px rgba(0,0,0,0.3)',
-            }}
-          />
-
-          {/* Volume buttons (left) */}
-          {[160, 220, 276].map((top, i) => (
-            <div
-              key={i}
-              className="absolute rounded-l"
-              style={{
-                left: -3,
-                top,
-                width: 4,
-                height: i === 0 ? 36 : 52,
-                background: 'linear-gradient(180deg, #2A2A2A, #222)',
-                borderRadius: '4px 0 0 4px',
-                boxShadow: '-2px 0 4px rgba(0,0,0,0.3)',
-              }}
-            />
-          ))}
-
-          {/* Screen bezel */}
-          <div
-            className="absolute overflow-hidden"
-            style={{
-              inset: '10px 6px',
-              borderRadius: 44,
-              background: '#FAF8F5',
-            }}
-          >
-            {/* Dynamic Island */}
-            <div
-              className="absolute z-50"
-              style={{
-                top: 14,
-                left: '50%',
-                transform: 'translateX(-50%)',
-                width: 116,
-                height: 34,
-                background: '#000',
-                borderRadius: 20,
-              }}
-            />
-
-            {/* Status bar */}
-            <div
-              className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between"
-              style={{ height: 54, paddingLeft: 24, paddingRight: 24 }}
-            >
-              <span
-                style={{
-                  fontSize: 13,
-                  fontWeight: 600,
-                  color: isIntro ? '#FAF8F5' : '#2A1F1A',
-                  fontFamily: '-apple-system, sans-serif',
-                }}
-              >
-                9:41
-              </span>
-              <div
-                className="flex items-center gap-1.5"
-                style={{ color: isIntro ? '#FAF8F5' : '#2A1F1A' }}
-              >
-                {/* Signal bars */}
-                <div className="flex items-end gap-0.5" style={{ height: 12 }}>
-                  {[6, 8, 10, 12].map((h, i) => (
-                    <div
-                      key={i}
-                      className="w-1 rounded-sm"
-                      style={{
-                        height: h,
-                        background: 'currentColor',
-                        opacity: i < 3 ? 1 : 0.35,
-                      }}
-                    />
-                  ))}
-                </div>
-                {/* WiFi */}
-                <svg width="15" height="12" viewBox="0 0 15 12" fill="currentColor" opacity="0.9">
-                  <path d="M7.5 9.5a1.2 1.2 0 110 2.4 1.2 1.2 0 010-2.4zm0-3.5a5.5 5.5 0 013.9 1.6l1.3-1.3A7.4 7.4 0 007.5 4 7.4 7.4 0 002.3 6.3l1.3 1.3A5.5 5.5 0 017.5 6zm0-4A9.7 9.7 0 0114.9 5l1.3-1.3A11.6 11.6 0 007.5 0 11.6 11.6 0 00.8 3.7L2.1 5A9.7 9.7 0 017.5 2z"/>
-                </svg>
-                {/* Battery */}
-                <div className="flex items-center">
-                  <div
-                    className="rounded"
-                    style={{ width: 23, height: 12, border: '1.5px solid currentColor', padding: '1.5px', position: 'relative' }}
-                  >
-                    <div
-                      className="h-full rounded-sm"
-                      style={{ width: '75%', background: 'currentColor' }}
-                    />
-                  </div>
-                  <div
-                    style={{ width: 2, height: 5, background: 'currentColor', opacity: 0.5, marginLeft: 1, borderRadius: 1 }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Screen content area */}
-            <div className="absolute inset-0" style={{ paddingTop: 54 }}>
-              {screen === 'intro' && <IntroScreen onNavigate={setScreen} />}
-              {screen === 'login' && <LoginScreen onNavigate={setScreen} />}
-              {screen === 'signup' && <SignUpScreen onNavigate={setScreen} />}
-              {screen === 'main' && (
-                <MainApp
-                  activeTab={activeTab}
-                  setActiveTab={setActiveTab}
-                  onNavigate={setScreen}
-                  totalPoints={totalPoints}
-                  onLogout={handleLogout}
-                />
-              )}
-              {screen === 'mission' && (
-                <MissionScreen
-                  onNavigate={setScreen}
-                  setDiaryType={setDiaryType}
-                  setSelectedMission={setSelectedMission}
-                  captured={capturedMissions}
-                  earnedByMission={earnedByMission}
-                />
-              )}
-              {screen === 'diary' && (
-                <DiaryScreen
-                  diaryType={diaryType}
-                  setDiaryType={setDiaryType}
-                  onNavigate={setScreen}
-                />
-              )}
-              {screen === 'photocheck' && (
-                <PhotoAccuracyScreen
-                  mission={selectedMission}
-                  onBack={() => setScreen('mission')}
-                  onConfirm={(earned, photoDataUrl) => {
-                    if (selectedMission) handleCaptureMission(selectedMission, earned, photoDataUrl);
-                    setScreen('mission');
-                  }}
-                />
-              )}
-              {screen === 'reward' && (
-                <RewardScreen
-                  onBack={() => setScreen('main')}
-                  onLocalCurrency={() => setScreen('localcurrency')}
-                  totalPoints={totalPoints}
-                  history={rewardHistory}
-                />
-              )}
-              {screen === 'localcurrency' && (
-                <LocalCurrencyScreen onBack={() => setScreen('reward')} totalPoints={totalPoints} />
-              )}
-              {screen === 'accountmgmt' && (
-                <AccountMgmtScreen onBack={() => setScreen('main')} />
-              )}
-              {screen === 'notifications' && (
-                <NotificationSettingsScreen onBack={() => setScreen('main')} />
-              )}
-              {screen === 'appinfo' && (
-                <AppInfoScreen onBack={() => setScreen('main')} />
-              )}
-              {screen === 'contact' && (
-                <ContactScreen onBack={() => setScreen('main')} />
-              )}
-            </div>
-
-            {/* Home indicator */}
-            <div
-              className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full"
-              style={{ width: 120, height: 5, background: 'rgba(42,31,26,0.25)' }}
-            />
-          </div>
-        </div>
-
-        {/* Screen label below phone */}
-        <div className="flex gap-2 flex-wrap justify-center" style={{ maxWidth: 400 }}>
-          {([
-            ['intro', '홈'],
-            ['login', '로그인'],
-            ['signup', '회원가입'],
-            ['main', '메인'],
-            ['mission', '미션'],
-            ['photocheck', '사진확인'],
-            ['diary', '기록'],
-            ['reward', '포인트'],
-            ['localcurrency', '지역화폐'],
-            ['accountmgmt', '계정관리'],
-            ['notifications', '알림'],
-            ['appinfo', '앱정보'],
-            ['contact', '문의'],
-          ] as [AppScreen, string][]).map(([s, label]) => (
-            <button
-              key={s}
-              onClick={() => setScreen(s)}
-              className="px-3 py-1.5 rounded-full text-xs font-medium transition-all active:scale-95"
-              style={{
-                background: screen === s ? '#C97C56' : 'rgba(42,31,26,0.15)',
-                color: screen === s ? '#FFFFFF' : '#2A1F1A',
-                fontSize: 11,
-                fontFamily: "'Noto Sans KR', sans-serif",
-                fontWeight: screen === s ? 700 : 400,
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+      <div
+        className="w-full h-full overflow-hidden"
+        style={{
+          maxWidth: 430,
+          background: '#FAF8F5',
+          boxShadow: '0 0 0 1px rgba(42,31,26,0.06)',
+          paddingTop: 'env(safe-area-inset-top)',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}
+      >
+        <Suspense fallback={<LoadingScreen />}>
+          {renderScreen()}
+        </Suspense>
       </div>
     </div>
   );

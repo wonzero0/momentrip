@@ -1,7 +1,7 @@
 import { type ChangeEvent, useRef, useState } from 'react';
 import { Camera, Check, ChevronLeft, ChevronRight, Database, Eye, EyeOff, ShieldCheck, Upload, User } from 'lucide-react';
-import { EmailAuthProvider, reauthenticateWithCredential, updatePassword, updateProfile } from 'firebase/auth';
-import { auth } from '../../firebase';
+import { api } from '../lib/api';
+import { copyText } from '../lib/clipboard';
 
 interface Props {
   onBack: () => void;
@@ -16,10 +16,11 @@ interface AccountProfile {
 type Section = 'menu' | 'profile' | 'password' | 'photo' | 'data';
 
 const PROFILE_KEY = 'momentrip.accountProfile';
+const TOKEN_KEY = 'momentrip_token';
 
 const DEFAULT_PROFILE: AccountProfile = {
   displayName: '여행자님',
-  userCode: '#1618',
+  userCode: '#0000',
   photoDataUrl: null,
 };
 
@@ -37,9 +38,13 @@ function saveProfile(profile: AccountProfile) {
 }
 
 function readableAuthId() {
-  const email = auth.currentUser?.email;
-  if (!email) return '로그인 정보 없음';
-  return email.endsWith('@momentrip.app') ? '모먼트립 아이디 계정' : email;
+  try {
+    const session = JSON.parse(localStorage.getItem(TOKEN_KEY) || '{}');
+    const user = session.user || {};
+    return user.username ? `${user.username} · ${user.email || '서버 계정'}` : '로그인 정보 없음';
+  } catch {
+    return '로그인 정보 없음';
+  }
 }
 
 export function AccountMgmtScreen({ onBack }: Props) {
@@ -57,17 +62,21 @@ export function AccountMgmtScreen({ onBack }: Props) {
   const [status, setStatus] = useState('');
 
   const persistProfile = async (next: AccountProfile) => {
-    saveProfile(next);
-    setProfile(next);
-    setDisplayName(next.displayName);
-    setUserCode(next.userCode);
-    setPreviewPhoto(next.photoDataUrl);
-
-    if (auth.currentUser) {
-      await updateProfile(auth.currentUser, { displayName: next.displayName }).catch(error => {
-        console.warn('Firebase 프로필 업데이트 실패:', error);
-      });
-    }
+    const user = await api.updateProfile({
+      displayName: next.displayName,
+      code: next.userCode,
+      photoDataUrl: next.photoDataUrl,
+    });
+    const savedProfile = {
+      ...next,
+      displayName: user.displayName || next.displayName,
+      userCode: user.code || next.userCode,
+    };
+    saveProfile(savedProfile);
+    setProfile(savedProfile);
+    setDisplayName(savedProfile.displayName);
+    setUserCode(savedProfile.userCode);
+    setPreviewPhoto(savedProfile.photoDataUrl);
   };
 
   const saveProfileInfo = async () => {
@@ -75,11 +84,23 @@ export function AccountMgmtScreen({ onBack }: Props) {
       alert('이름을 입력해 주세요.');
       return;
     }
+    if (displayName.trim().length > 30) {
+      alert('이름은 30자 이하로 입력해 주세요.');
+      return;
+    }
 
     const normalizedCode = userCode.trim().startsWith('#') ? userCode.trim() : `#${userCode.trim()}`;
-    await persistProfile({ ...profile, displayName: displayName.trim(), userCode: normalizedCode || '#1618' });
-    setStatus('프로필 정보가 저장되었습니다.');
-    window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
+    if (!/^#[0-9]{4}$/.test(normalizedCode)) {
+      alert('사용자 코드는 #을 제외한 숫자 4자리로 입력해 주세요.');
+      return;
+    }
+    try {
+      await persistProfile({ ...profile, displayName: displayName.trim(), userCode: normalizedCode });
+      setStatus('프로필 정보가 저장되었습니다.');
+      window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '프로필 저장에 실패했습니다.');
+    }
   };
 
   const savePassword = async () => {
@@ -87,36 +108,23 @@ export function AccountMgmtScreen({ onBack }: Props) {
       alert('비밀번호를 모두 입력해 주세요.');
       return;
     }
-    if (newPw.length < 6) {
-      alert('새 비밀번호는 6자리 이상이어야 합니다.');
+    if (newPw.length < 6 || newPw.length > 72) {
+      alert('새 비밀번호는 6~72자로 입력해 주세요.');
       return;
     }
     if (newPw !== confirmPw) {
       alert('새 비밀번호가 일치하지 않습니다.');
       return;
     }
-    if (!auth.currentUser?.email) {
-      alert('현재 로그인된 Firebase 계정이 없어 비밀번호를 변경할 수 없습니다.');
-      return;
-    }
-
     try {
-      const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPw);
-      await reauthenticateWithCredential(auth.currentUser, credential);
-      await updatePassword(auth.currentUser, newPw);
+      await api.updatePassword({ currentPassword: currentPw, newPassword: newPw });
       setCurrentPw('');
       setNewPw('');
       setConfirmPw('');
       setStatus('비밀번호가 변경되었습니다.');
       window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
-    } catch (error: any) {
-      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
-        alert('현재 비밀번호가 일치하지 않습니다.');
-      } else if (error.code === 'auth/requires-recent-login') {
-        alert('보안을 위해 다시 로그인한 뒤 변경해 주세요.');
-      } else {
-        alert(`비밀번호 변경에 실패했습니다: ${error.message ?? error.code}`);
-      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '비밀번호 변경에 실패했습니다.');
     }
   };
 
@@ -138,9 +146,13 @@ export function AccountMgmtScreen({ onBack }: Props) {
       return;
     }
 
-    await persistProfile({ ...profile, photoDataUrl: previewPhoto });
-    setStatus('프로필 사진이 저장되었습니다.');
-    window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
+    try {
+      await persistProfile({ ...profile, photoDataUrl: previewPhoto });
+      setStatus('프로필 사진이 저장되었습니다.');
+      window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '프로필 사진 저장에 실패했습니다.');
+    }
   };
 
   const exportData = async () => {
@@ -151,17 +163,25 @@ export function AccountMgmtScreen({ onBack }: Props) {
         return acc;
       }, {});
 
-    await navigator.clipboard?.writeText(JSON.stringify(data, null, 2)).catch(() => undefined);
-    setStatus('로컬 계정 데이터가 클립보드에 복사되었습니다.');
+    try {
+      await copyText(JSON.stringify(data, null, 2));
+      setStatus('로컬 계정 데이터가 클립보드에 복사되었습니다.');
+    } catch {
+      setStatus('클립보드에 복사하지 못했습니다.');
+    }
     window.setTimeout(() => setStatus(''), 1500);
   };
 
   const resetProfile = async () => {
     if (!window.confirm('프로필 이름, 사용자 코드, 프로필 사진을 초기화할까요?')) return;
-    localStorage.removeItem(PROFILE_KEY);
-    await persistProfile(DEFAULT_PROFILE);
-    setStatus('프로필이 초기화되었습니다.');
-    window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
+    try {
+      const resetProfile = { ...DEFAULT_PROFILE, userCode: profile.userCode };
+      await persistProfile(resetProfile);
+      setStatus('프로필이 초기화되었습니다.');
+      window.setTimeout(() => { setStatus(''); setSection('menu'); }, 1200);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '프로필 초기화에 실패했습니다.');
+    }
   };
 
   const Header = ({ title, backToMenu = true }: { title: string; backToMenu?: boolean }) => (
@@ -200,6 +220,7 @@ export function AccountMgmtScreen({ onBack }: Props) {
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: '#9E8B7E' }}>표시 이름</label>
               <input
+                maxLength={30}
                 value={displayName}
                 onChange={event => setDisplayName(event.target.value)}
                 className="w-full mt-2 rounded-2xl px-4 outline-none"
@@ -209,6 +230,8 @@ export function AccountMgmtScreen({ onBack }: Props) {
             <div>
               <label style={{ fontSize: 12, fontWeight: 700, color: '#9E8B7E' }}>사용자 코드</label>
               <input
+                inputMode="numeric"
+                maxLength={5}
                 value={userCode}
                 onChange={event => setUserCode(event.target.value)}
                 className="w-full mt-2 rounded-2xl px-4 outline-none"
@@ -243,7 +266,7 @@ export function AccountMgmtScreen({ onBack }: Props) {
         <div className="flex-1 overflow-y-auto px-5 pt-3 pb-5">
           <div className="rounded-2xl p-4 mb-4" style={{ background: '#F5EFE6', border: '1.5px solid rgba(201,124,86,0.18)' }}>
             <p style={{ fontSize: 12, color: '#6B5040', lineHeight: 1.5 }}>
-              Firebase 보안 정책상 현재 비밀번호로 본인 확인 후 변경합니다.
+              현재 비밀번호로 본인 확인 후 서버 계정 비밀번호를 변경합니다.
             </p>
           </div>
 

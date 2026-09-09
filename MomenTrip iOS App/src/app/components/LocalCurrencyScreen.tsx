@@ -27,9 +27,9 @@ const STORE_IMGS = {
   food: 'https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=400&h=300&fit=crop&auto=format',
   cafe: 'https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=400&h=300&fit=crop&auto=format',
   bakery: 'https://images.unsplash.com/photo-1509440159596-0249088772ff?w=400&h=300&fit=crop&auto=format',
-  market: 'https://images.unsplash.com/photo-1534723452862-4c43f7c2f2ba?w=400&h=300&fit=crop&auto=format',
+  market: 'https://images.unsplash.com/photo-1506806732259-39c2d0268443?w=400&h=300&fit=crop&auto=format',
   tourist: 'https://images.unsplash.com/photo-1469474968028-56623f02e42e?w=400&h=300&fit=crop&auto=format',
-  restaurant: 'https://images.unsplash.com/photo-1555396273-65b5a2b89d8b?w=400&h=300&fit=crop&auto=format',
+  restaurant: 'https://images.unsplash.com/photo-1552566626-52f8b828add9?w=400&h=300&fit=crop&auto=format',
 };
 
 const REGIONS: Region[] = [

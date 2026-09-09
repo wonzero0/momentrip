@@ -1,10 +1,14 @@
 import { useState } from 'react';
 import { CalendarPlus, ChevronRight, Clock, Compass, MapPin, Star, WalletCards, X } from 'lucide-react';
 import { AppScreen } from '../App';
+import { api } from '../lib/api';
+import type { TripRoom } from '../types';
 
 interface Props {
   onNavigate: (s: AppScreen) => void;
   onHome: () => void;
+  activeTrip: TripRoom | null;
+  onTripStarted: (room: TripRoom) => void;
 }
 
 type Phase = 'home' | 'planQuestion' | 'planInput';
@@ -24,13 +28,18 @@ interface Destination {
 }
 
 const PLAN_STORAGE_KEY = 'momentrip.savedTravelPlans';
+const COMMONS_FILE = 'https://commons.wikimedia.org/wiki/Special:FilePath/';
+
+function commonsImage(fileName: string) {
+  return `${COMMONS_FILE}${fileName}?width=900`;
+}
 
 const DESTINATIONS: Destination[] = [
   {
     id: 'jeju',
     name: '제주도',
     tag: '자연 · 힐링',
-    img: 'https://images.unsplash.com/photo-1579169825453-8d4b465d7c6a?w=700&h=460&fit=crop&auto=format',
+    img: commonsImage('Seongsan_Ilchulbong_from_the_air.jpg'),
     rating: 4.8,
     summary: '바다, 오름, 로컬 음식이 한 번에 이어지는 대표 힐링 여행지예요.',
     bestSeason: '4-6월, 9-10월',
@@ -43,7 +52,7 @@ const DESTINATIONS: Destination[] = [
     id: 'busan',
     name: '부산',
     tag: '바다 · 야경',
-    img: 'https://images.unsplash.com/photo-1598048129182-7d70c3c65f82?w=700&h=460&fit=crop&auto=format',
+    img: commonsImage('Gwangan_Bridge_at_Night_from_Distance.jpg'),
     rating: 4.7,
     summary: '해변 산책, 시장 먹거리, 야경 명소를 촘촘하게 즐기기 좋아요.',
     bestSeason: '5-6월, 9-11월',
@@ -56,7 +65,7 @@ const DESTINATIONS: Destination[] = [
     id: 'gyeongju',
     name: '경주',
     tag: '역사 · 문화',
-    img: 'https://images.unsplash.com/photo-1599148401005-fe6d7497cbf4?w=700&h=460&fit=crop&auto=format',
+    img: commonsImage('Donggung_Palace_and_Wolji_Pond%2C_Night_view.jpg'),
     rating: 4.6,
     summary: '낮에는 유적지, 밤에는 동궁과 월지 야경으로 분위기가 달라져요.',
     bestSeason: '3-5월, 10-11월',
@@ -69,7 +78,7 @@ const DESTINATIONS: Destination[] = [
     id: 'gangneung',
     name: '강릉',
     tag: '커피 · 바다',
-    img: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=700&h=460&fit=crop&auto=format',
+    img: commonsImage('Anmok_Beach_20220430_006.jpg'),
     rating: 4.7,
     summary: '바다 전망 카페와 아침 해변 산책을 중심으로 가볍게 다녀오기 좋아요.',
     bestSeason: '6-8월, 10월',
@@ -82,7 +91,7 @@ const DESTINATIONS: Destination[] = [
     id: 'yeosu',
     name: '여수',
     tag: '낭만 · 섬',
-    img: 'https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?w=700&h=460&fit=crop&auto=format',
+    img: commonsImage('Yeosu_Maritime_Cable_Car_View.jpg'),
     rating: 4.5,
     summary: '밤바다와 해상 케이블카, 섬 코스를 함께 묶기 좋은 남해 여행지예요.',
     bestSeason: '4-6월, 9월',
@@ -95,7 +104,7 @@ const DESTINATIONS: Destination[] = [
     id: 'jeonju',
     name: '전주',
     tag: '한옥 · 미식',
-    img: 'https://images.unsplash.com/photo-1528360983277-13d401cdc186?w=700&h=460&fit=crop&auto=format',
+    img: commonsImage('Jeonju_Hanok_Maeul_01.jpg'),
     rating: 4.6,
     summary: '한옥마을 산책과 전통 음식 코스가 짧은 일정에도 잘 맞아요.',
     bestSeason: '4-5월, 10월',
@@ -124,12 +133,13 @@ function destinationToPlan(destination: Destination) {
   ].join('\n');
 }
 
-export function YeohaengTab({ onNavigate }: Props) {
+export function YeohaengTab({ onNavigate, activeTrip, onTripStarted }: Props) {
   const [phase, setPhase] = useState<Phase>('planQuestion');
   const [planText, setPlanText] = useState('');
   const [selectedDestination, setSelectedDestination] = useState<Destination | null>(null);
   const [savedPlans, setSavedPlans] = useState<string[]>(readSavedPlans);
   const [notice, setNotice] = useState('');
+  const [savingPlan, setSavingPlan] = useState(false);
 
   const handleAddDestination = (destination: Destination) => {
     const nextPlan = destinationToPlan(destination);
@@ -142,6 +152,23 @@ export function YeohaengTab({ onNavigate }: Props) {
     setNotice(`${destination.name} 일정이 추가되었습니다.`);
     setSelectedDestination(null);
     setPhase('planInput');
+  };
+
+  const handleConfirmPlan = async () => {
+    setSavingPlan(true);
+    try {
+      const room = await api.createRoom({
+        name: planText.trim().split('\n')[0]?.slice(0, 24) || '새 여행',
+        memberIds: [],
+        planText: planText.trim(),
+      });
+      onTripStarted(room);
+      onNavigate('mission');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '여행 계획 저장에 실패했습니다.');
+    } finally {
+      setSavingPlan(false);
+    }
   };
 
   if (phase === 'planQuestion' || phase === 'planInput') {
@@ -224,11 +251,12 @@ export function YeohaengTab({ onNavigate }: Props) {
                     추천 보기
                   </button>
                   <button
-                    onClick={() => onNavigate('mission')}
+                    onClick={handleConfirmPlan}
+                    disabled={savingPlan}
                     className="flex-1 py-3.5 rounded-2xl active:scale-95 transition-all"
-                    style={{ background: '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 600, border: 'none', boxShadow: '0 6px 20px rgba(201,124,86,0.35)' }}
+                    style={{ background: savingPlan ? '#CDBEB2' : '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 600, border: 'none', boxShadow: savingPlan ? 'none' : '0 6px 20px rgba(201,124,86,0.35)' }}
                   >
-                    확인
+                    {savingPlan ? '저장 중' : '확인'}
                   </button>
                 </div>
               </>
@@ -245,14 +273,19 @@ export function YeohaengTab({ onNavigate }: Props) {
       style={{ background: '#FAF8F5', fontFamily: "'Noto Sans KR', sans-serif" }}
     >
       <div className="px-5 pt-4 pb-2 flex justify-center">
-        <p style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>여행가유</p>
+        <div style={{ textAlign: 'center' }}>
+          <p style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>여행가유</p>
+          {activeTrip && (
+            <p style={{ fontSize: 10, color: '#9E8B7E', marginTop: 2 }}>현재 여행: {activeTrip.name}</p>
+          )}
+        </div>
       </div>
 
       <div className="px-5 pt-4 pb-6">
         <div className="rounded-3xl overflow-hidden relative" style={{ height: 180 }}>
           <img
-            src="https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=800&h=400&fit=crop&auto=format"
-            alt="travel destination"
+            src={DESTINATIONS[0].img}
+            alt={DESTINATIONS[0].name}
             className="w-full h-full object-cover"
           />
           <div

@@ -18,5 +18,5 @@ export function idToAuthEmail(id: string) {
 
 export function isValidLoginId(id: string) {
   const normalized = normalizeId(id);
-  return normalized.length >= 3;
+  return /^[\p{L}\p{N}._-]{3,40}$/u.test(normalized);
 }

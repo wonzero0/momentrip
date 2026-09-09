@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ChevronLeft, Mail, MessageSquareText, Send } from 'lucide-react';
+import { api } from '../lib/api';
 
 interface Props {
   onBack: () => void;
@@ -28,28 +29,51 @@ export function ContactScreen({ onBack }: Props) {
   const [message, setMessage] = useState('');
   const [inquiries, setInquiries] = useState<Inquiry[]>(readInquiries);
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  const handleSubmit = () => {
+  useEffect(() => {
+    api.inquiries()
+      .then((items) => {
+        const next = items.map((item) => ({
+          id: item.id,
+          category: item.category,
+          message: item.message,
+          createdAt: new Date(item.createdAt).toLocaleString('ko-KR'),
+        }));
+        setInquiries(next);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const handleSubmit = async () => {
     if (!message.trim()) {
       alert('문의 내용을 입력해 주세요.');
       return;
     }
 
-    const next = [
-      {
-        id: `inquiry-${Date.now()}`,
-        category,
-        message: message.trim(),
-        createdAt: new Date().toLocaleString('ko-KR'),
-      },
-      ...inquiries,
-    ].slice(0, 10);
-
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-    setInquiries(next);
-    setMessage('');
-    setSent(true);
-    window.setTimeout(() => setSent(false), 1500);
+    setSending(true);
+    try {
+      const saved = await api.saveInquiry({ category, message: message.trim() });
+      const next = [
+        {
+          id: saved.id,
+          category: saved.category,
+          message: saved.message,
+          createdAt: new Date(saved.createdAt).toLocaleString('ko-KR'),
+        },
+        ...inquiries,
+      ].slice(0, 10);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      setInquiries(next);
+      setMessage('');
+      setSent(true);
+      window.setTimeout(() => setSent(false), 1500);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : '문의 저장에 실패했습니다.');
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -72,7 +96,7 @@ export function ContactScreen({ onBack }: Props) {
             </div>
             <div>
               <p style={{ fontSize: 15, fontWeight: 700, color: '#2A1F1A' }}>문의 등록</p>
-              <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 2 }}>현재는 이 기기에 임시 저장됩니다.</p>
+              <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 2 }}>서버 DB에 문의 기록을 저장합니다.</p>
             </div>
           </div>
 
@@ -105,11 +129,12 @@ export function ContactScreen({ onBack }: Props) {
 
           <button
             onClick={handleSubmit}
+            disabled={sending}
             className="w-full mt-4 py-4 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all"
-            style={{ background: sent ? '#2A8B4A' : '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 700, border: 'none', boxShadow: '0 8px 24px rgba(201,124,86,0.28)' }}
+            style={{ background: sent ? '#2A8B4A' : sending ? '#CDBEB2' : '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 700, border: 'none', boxShadow: sending ? 'none' : '0 8px 24px rgba(201,124,86,0.28)' }}
           >
             {sent ? <Mail size={16} /> : <Send size={16} />}
-            {sent ? '저장 완료' : '문의 등록'}
+            {sending ? '저장 중' : sent ? '저장 완료' : '문의 등록'}
           </button>
         </div>
 

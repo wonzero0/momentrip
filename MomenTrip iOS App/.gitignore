@@ -2,5 +2,38 @@ node_modules/
 dist/
 server/data/
 server/uploads/
-.env.local
+.env
+.env.*
+!.env.example
+.vercel/
+*.log
+*.pem
+*.key
+*service-account*.json
+*serviceAccount*.json
+*firebase-adminsdk*.json
 .DS_Store
+
+# Server-only migration journals contain initial account passwords.
+**/supabase-migration*.json
+supabase/.temp/
+
+# Build caches and local credentials
+build/
+.cache/
+.vite/
+coverage/
+*.tsbuildinfo
+.netrc
+.npmrc
+*.p12
+*.pfx
+*.p8
+*.mobileprovision
+Thumbs.db
+._*
+*.swp
+supabase/.branches/
+
+# Unrelated local 3D-print drafts (keep originals on disk)
+/*.stl

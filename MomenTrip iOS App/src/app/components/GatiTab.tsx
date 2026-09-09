@@ -1,46 +1,63 @@
-import { useState } from 'react';
-import { Users, Plus, Check, Search, Link, Hash, DoorOpen, Copy, ChevronRight, MapPin } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Plus, Check, Search, Link, Hash, DoorOpen, Copy, ChevronRight } from 'lucide-react';
 import { AppScreen } from '../App';
+import { api } from '../lib/api';
+import { copyText } from '../lib/clipboard';
+import type { Friend, TripRoom } from '../types';
 
 interface Props {
   onNavigate: (s: AppScreen) => void;
   onHome: () => void;
+  activeTrip: TripRoom | null;
+  onTripStarted: (room: TripRoom) => void;
 }
 
 type Phase = 'home' | 'friendList' | 'planQuestion' | 'planInput';
 
-const FRIENDS = [
-  { id: 'f1', name: '김민준', code: '#3241', emoji: '🌊' },
-  { id: 'f2', name: '이서연', code: '#8812', emoji: '🌸' },
-  { id: 'f3', name: '박지후', code: '#5519', emoji: '⛰️' },
-  { id: 'f4', name: '최수아', code: '#2234', emoji: '🌙' },
-];
-
-const STORED_MEMBERS = [
-  { name: '김민준', code: '#3241', emoji: '🌊' },
-  { name: '이서연', code: '#8812', emoji: '🌸' },
-];
-
-const SHARED_PLANS = [
-  { title: '제주 3박4일', date: '7월 10일 ~ 13일', places: 8, emoji: '🏝️' },
-  { title: '부산 당일치기', date: '6월 28일', places: 5, emoji: '🌊' },
-];
-
-const INVITE_LINK = 'momentrip.app/room/xyz99';
-const INVITE_CODE = 'XYZ-9912';
-
-export function GatiTab({ onNavigate, onHome }: Props) {
+export function GatiTab({ onNavigate, onHome, activeTrip, onTripStarted }: Props) {
   const [phase, setPhase] = useState<Phase>('home');
   const [selected, setSelected] = useState<string[]>([]);
   const [planText, setPlanText] = useState('');
   const [searchCode, setSearchCode] = useState('');
-  const [searchResult, setSearchResult] = useState<{ name: string; code: string; emoji: string } | null>(null);
+  const [searchResult, setSearchResult] = useState<Friend | null>(null);
+  const [friends, setFriends] = useState<Friend[]>([]);
+  const [rooms, setRooms] = useState<TripRoom[]>([]);
+  const [savingRoom, setSavingRoom] = useState(false);
+  const [notice, setNotice] = useState('');
   const [linkCopied, setLinkCopied] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [joinCode, setJoinCode] = useState('');
   const [showJoinInput, setShowJoinInput] = useState(false);
 
-  const selectedFriends = FRIENDS.filter(f => selected.includes(f.id));
+  const selectedFriends = friends.filter(f => selected.includes(f.id));
+  const primaryRoom = rooms[0] ?? null;
+  const roomMembers = primaryRoom?.members ?? [];
+  const inviteCode = primaryRoom?.inviteCode ?? '';
+  const inviteLink = inviteCode ? `momentrip.app/room/${inviteCode}` : '방 생성 후 표시됩니다';
+
+  const loadRooms = async () => {
+    try {
+      setRooms(await api.rooms());
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '방 목록을 불러오지 못했습니다.');
+    }
+  };
+
+  const loadFriends = async (queryText = '') => {
+    try {
+      const result = await api.friends(queryText);
+      setFriends(result);
+      return result;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '친구 목록을 불러오지 못했습니다.');
+      return [] as Friend[];
+    }
+  };
+
+  useEffect(() => {
+    void loadRooms();
+    void loadFriends();
+  }, []);
 
   const toggleFriend = (id: string) => {
     setSelected(prev =>
@@ -48,16 +65,78 @@ export function GatiTab({ onNavigate, onHome }: Props) {
     );
   };
 
-  const handleSearch = () => {
-    if (searchCode.startsWith('#')) {
-      const found = FRIENDS.find(f => f.code === searchCode);
-      setSearchResult(found ? { name: found.name, code: found.code, emoji: found.emoji }
-        : { name: '알 수 없는 사용자', code: searchCode, emoji: '❓' });
+  const handleSearch = async () => {
+    const result = await loadFriends(searchCode);
+    const found = result[0];
+    setSearchResult(found ?? null);
+  };
+
+  const handleAddSearchResult = () => {
+    if (!searchResult) return;
+    toggleFriend(searchResult.id);
+    setPhase('friendList');
+  };
+
+  const handleCreateRoom = async (withPlan: boolean) => {
+    setSavingRoom(true);
+    setNotice('');
+    try {
+      const room = await api.createRoom({
+        name: selectedFriends.length ? '함께 떠나는 여행방' : '나의 여행방',
+        memberIds: selected,
+        planText: withPlan ? planText : '',
+      });
+      onTripStarted(room);
+      await loadRooms();
+      setSelected([]);
+      setPlanText('');
+      onNavigate('mission');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '방 생성에 실패했습니다.');
+    } finally {
+      setSavingRoom(false);
     }
   };
 
-  const handleCopyLink = () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
-  const handleCopyCode = () => { setCodeCopied(true); setTimeout(() => setCodeCopied(false), 2000); };
+  const copyInviteText = async (value: string, copied: (value: boolean) => void) => {
+    if (!inviteCode) {
+      setNotice('먼저 여행방을 생성하면 초대코드가 발급됩니다.');
+      return;
+    }
+
+    try {
+      await copyText(value);
+      copied(true);
+      setTimeout(() => copied(false), 2000);
+    } catch {
+      setNotice('클립보드 접근이 제한되었습니다. 초대코드를 직접 전달해주세요.');
+    }
+  };
+
+  const handleCopyLink = () => void copyInviteText(inviteLink, setLinkCopied);
+  const handleCopyCode = () => void copyInviteText(inviteCode, setCodeCopied);
+
+  const handleJoinRoom = async () => {
+    if (!joinCode.trim()) {
+      setNotice('초대코드를 입력해주세요.');
+      return;
+    }
+
+    setSavingRoom(true);
+    setNotice('');
+    try {
+      const room = await api.joinRoom(joinCode);
+      onTripStarted(room);
+      await loadRooms();
+      setJoinCode('');
+      setShowJoinInput(false);
+      setNotice(`${room.name}에 참여했습니다.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '방 참여에 실패했습니다.');
+    } finally {
+      setSavingRoom(false);
+    }
+  };
 
   // ─── Home phase ───
   if (phase === 'home') {
@@ -65,15 +144,20 @@ export function GatiTab({ onNavigate, onHome }: Props) {
       <div className="w-full h-full flex flex-col" style={{ background: '#FAF8F5', fontFamily: "'Noto Sans KR', sans-serif" }}>
         {/* Sub-header */}
 <div className="px-5 pt-4 pb-3 flex-shrink-0 flex justify-center">
-  <p
-    style={{
-      fontSize: 14,
-      fontWeight: 700,
-      color: '#2A1F1A',
-    }}
-  >
-    같이가유
-  </p>
+  <div style={{ textAlign: 'center' }}>
+    <p
+      style={{
+        fontSize: 14,
+        fontWeight: 700,
+        color: '#2A1F1A',
+      }}
+    >
+      같이가유
+    </p>
+    {activeTrip && (
+      <p style={{ fontSize: 10, color: '#9E8B7E', marginTop: 2 }}>현재 여행: {activeTrip.name}</p>
+    )}
+  </div>
 </div>
 
         <div className="flex-1 overflow-y-auto px-5 pb-4">
@@ -117,12 +201,23 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                   <p style={{ fontSize: 11, color: '#9E8B7E' }}>{searchResult.code}</p>
                 </div>
                 <button
+                  onClick={handleAddSearchResult}
                   className="px-3 py-1.5 rounded-xl active:scale-95 text-xs font-semibold"
                   style={{ background: '#C97C56', color: '#FFF', border: 'none' }}
                 >
                   추가
                 </button>
               </div>
+            )}
+            {!searchResult && searchCode && (
+              <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 8 }}>
+                검색 결과가 없으면 상대방도 회원가입을 먼저 해야 합니다.
+              </p>
+            )}
+            {notice && (
+              <p className="rounded-xl px-3 py-2 mt-2" style={{ fontSize: 11, color: '#6B5040', background: '#F5EFE6' }}>
+                {notice}
+              </p>
             )}
           </div>
 
@@ -157,14 +252,16 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                   placeholder="초대 코드 입력 (예: XYZ-9912)"
                   value={joinCode}
                   onChange={e => setJoinCode(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && void handleJoinRoom()}
                 />
               </div>
               <button
                 className="rounded-2xl px-4 active:scale-95 flex-shrink-0"
-                style={{ height: 48, background: '#C97C56', color: '#FFF', fontSize: 13, fontWeight: 600, border: 'none' }}
-                onClick={() => { setShowJoinInput(false); setJoinCode(''); }}
+                style={{ height: 48, background: savingRoom ? '#CDBEB2' : '#C97C56', color: '#FFF', fontSize: 13, fontWeight: 600, border: 'none' }}
+                onClick={() => void handleJoinRoom()}
+                disabled={savingRoom}
               >
-                입장
+                {savingRoom ? '입장 중' : '입장'}
               </button>
             </div>
           )}
@@ -185,7 +282,7 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                 >
                   <Link size={12} color="#C97C56" />
                   <span style={{ fontSize: 12, color: '#2A1F1A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {INVITE_LINK}
+                    {inviteLink}
                   </span>
                 </div>
                 <button
@@ -207,7 +304,7 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                 >
                   <Hash size={12} color="#C97C56" />
                   <span style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A', letterSpacing: '0.1em' }}>
-                    {INVITE_CODE}
+                    {inviteCode || '------'}
                   </span>
                 </div>
                 <button
@@ -232,12 +329,18 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                 className="px-2 py-0.5 rounded-full"
                 style={{ background: '#F5EFE6', fontSize: 10, fontWeight: 700, color: '#C97C56' }}
               >
-                {STORED_MEMBERS.length}명
+                {roomMembers.length}명
               </span>
             </div>
             <div className="flex flex-col gap-2">
-              {STORED_MEMBERS.map((m, i) => (
-                <div key={i} className="flex items-center gap-3">
+              {roomMembers.length === 0 && (
+                <div className="rounded-xl p-3" style={{ background: '#FAF8F5', border: '1px solid rgba(42,31,26,0.06)' }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: '#2A1F1A' }}>아직 참여 중인 방이 없어요</p>
+                  <p style={{ fontSize: 10, color: '#9E8B7E', marginTop: 2 }}>방을 만들거나 초대코드로 입장하면 멤버가 표시됩니다.</p>
+                </div>
+              )}
+              {roomMembers.map((m) => (
+                <div key={m.id} className="flex items-center gap-3">
                   <div
                     className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
                     style={{ background: '#F5EFE6', fontSize: 16 }}
@@ -246,7 +349,7 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                   </div>
                   <div className="flex-1">
                     <p style={{ fontSize: 12, fontWeight: 600, color: '#2A1F1A' }}>{m.name}</p>
-                    <p style={{ fontSize: 10, color: '#9E8B7E' }}>{m.code}</p>
+                    <p style={{ fontSize: 10, color: '#9E8B7E' }}>{m.owner ? '방장' : '멤버'} · {m.code}</p>
                   </div>
                   <div
                     className="w-5 h-5 rounded-full flex items-center justify-center"
@@ -278,22 +381,28 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                 className="px-2 py-0.5 rounded-full"
                 style={{ background: '#F5EFE6', fontSize: 10, fontWeight: 700, color: '#C97C56' }}
               >
-                {SHARED_PLANS.length}개
+                {rooms.length}개
               </span>
             </div>
             <div className="flex flex-col gap-2">
-              {SHARED_PLANS.map((plan, i) => (
+              {rooms.length === 0 && (
+                <div className="rounded-xl p-3" style={{ background: '#FAF8F5', border: '1px solid rgba(42,31,26,0.06)' }}>
+                  <p style={{ fontSize: 12, fontWeight: 700, color: '#2A1F1A' }}>아직 생성된 방이 없어요</p>
+                  <p style={{ fontSize: 10, color: '#9E8B7E', marginTop: 2 }}>방 생성하기를 누르면 서버에 저장됩니다.</p>
+                </div>
+              )}
+              {rooms.map((room, i) => (
                 <div
-                  key={i}
+                  key={room.id}
                   className="flex items-center gap-3 rounded-xl p-3"
                   style={{ background: '#FAF8F5', border: '1px solid rgba(42,31,26,0.06)' }}
                 >
-                  <span style={{ fontSize: 22 }}>{plan.emoji}</span>
+                  <span style={{ fontSize: 22 }}>✈️</span>
                   <div className="flex-1">
-                    <p style={{ fontSize: 13, fontWeight: 600, color: '#2A1F1A' }}>{plan.title}</p>
+                    <p style={{ fontSize: 13, fontWeight: 600, color: '#2A1F1A' }}>{room.name}</p>
                     <div className="flex items-center gap-3 mt-1">
-                      <span style={{ fontSize: 10, color: '#9E8B7E' }}>{plan.date}</span>
-                      <span style={{ fontSize: 10, color: '#C97C56' }}>📍 {plan.places}곳</span>
+                      <span style={{ fontSize: 10, color: '#9E8B7E' }}>{room.createdAt.slice(0, 10)}</span>
+                      <span style={{ fontSize: 10, color: '#C97C56' }}>초대코드 {room.inviteCode}</span>
                     </div>
                   </div>
                   <ChevronRight size={14} color="#9E8B7E" />
@@ -349,7 +458,7 @@ export function GatiTab({ onNavigate, onHome }: Props) {
 
         <div className="flex-1 overflow-y-auto px-5">
           <div className="flex flex-col gap-3">
-            {FRIENDS.map(f => {
+            {friends.map(f => {
               const isSelected = selected.includes(f.id);
               return (
                 <button
@@ -383,6 +492,12 @@ export function GatiTab({ onNavigate, onHome }: Props) {
                 </button>
               );
             })}
+            {friends.length === 0 && (
+              <div className="rounded-2xl p-5" style={{ background: '#FFFFFF', boxShadow: '0 2px 12px rgba(42,31,26,0.06)' }}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#2A1F1A' }}>초대 가능한 친구가 없어요</p>
+                <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 4 }}>다른 계정이 가입된 뒤 아이디나 사용자 코드로 검색할 수 있습니다.</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -436,10 +551,11 @@ export function GatiTab({ onNavigate, onHome }: Props) {
               style={{ background: '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 600, border: 'none' }}
             >예</button>
             <button
-              onClick={() => onNavigate('mission')}
+              onClick={() => handleCreateRoom(false)}
+              disabled={savingRoom}
               className="flex-1 py-3.5 rounded-2xl active:scale-95 transition-all"
               style={{ background: '#F0EAE2', color: '#2A1F1A', fontSize: 15, fontWeight: 600, border: 'none' }}
-            >아니오</button>
+            >{savingRoom ? '생성 중' : '아니오'}</button>
           </div>
         </div>
       </div>
@@ -473,10 +589,11 @@ export function GatiTab({ onNavigate, onHome }: Props) {
             style={{ background: '#F0EAE2', color: '#2A1F1A', fontSize: 14, fontWeight: 600, border: 'none' }}
           >뒤로</button>
           <button
-            onClick={() => onNavigate('mission')}
+            onClick={() => handleCreateRoom(true)}
+            disabled={savingRoom}
             className="flex-1 py-3.5 rounded-2xl active:scale-95 transition-all"
             style={{ background: '#C97C56', color: '#FFFFFF', fontSize: 15, fontWeight: 600, border: 'none', boxShadow: '0 6px 20px rgba(201,124,86,0.35)' }}
-          >확인</button>
+          >{savingRoom ? '저장 중' : '확인'}</button>
         </div>
       </div>
     </div>

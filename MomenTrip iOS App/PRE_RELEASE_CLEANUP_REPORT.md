@@ -55,7 +55,7 @@
 - 리워드 지갑 화면
 
 ## 남은 위험 요소
-- 로컬 IP API: `.env.local`의 `VITE_API_BASE_URL`은 Mac 로컬 IP를 사용하므로 운영 배포 전 교체 필요.
+- 로컬 네트워크 API: `.env.local`의 `VITE_API_BASE_URL`은 Mac의 Bonjour 호스트명을 사용하므로 운영 배포 전 HTTPS API 도메인으로 교체 필요.
 - HTTP 허용 설정: iPhone 실기기 로컬 테스트용 HTTP 연결이며 App Store 배포 전 HTTPS 필요.
 - 실제 DB 미적용: 현재 `server/data/db.json` 기반 로컬 JSON 저장소이므로 운영용 DB로 교체 필요.
 - 파일 스토리지 미적용: 업로드 파일이 로컬 `server/uploads`에 저장되므로 운영용 스토리지/백업/삭제 정책 필요.

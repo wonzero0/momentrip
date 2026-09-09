@@ -1,3 +1,5 @@
+import { supabaseRequested } from '../../lib/supabase';
+import { supabaseApi } from './supabaseApi';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -32,12 +34,27 @@ import { assertFirebaseConfigured, auth, db, firebaseTargetLabel } from './fireb
 const TOKEN_KEY = 'momentrip_token';
 const AUTH_ALIAS_DOMAIN = 'momentrip.local';
 const FIREBASE_REQUEST_TIMEOUT_MS = 15000;
+const SERVER_API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/+$/, '');
 
 interface AuthRestSession {
   uid: string;
   email: string;
   idToken: string;
   refreshToken: string;
+}
+
+interface ServerSession {
+  token: string;
+  user?: User;
+  provider?: 'server';
+}
+
+interface Inquiry {
+  id: string;
+  userId?: string;
+  category: string;
+  message: string;
+  createdAt: string;
 }
 
 const MISSIONS = [
@@ -65,12 +82,97 @@ function makeInviteCode() {
   return Math.floor(Math.random() * 0xffffff).toString(16).padStart(6, '0').toUpperCase();
 }
 
+function normalizeInviteCode(inviteCode: string) {
+  return String(inviteCode || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 function makeUserCode() {
   return `#${Math.floor(1000 + Math.random() * 9000)}`;
 }
 
 function normalizeUsername(username: string) {
   return username.trim().toLowerCase();
+}
+
+function shouldUseServerApi() {
+  return Boolean(SERVER_API_BASE_URL);
+}
+
+function serverApiUrl(path: string) {
+  if (!SERVER_API_BASE_URL) throw new Error('VITE_API_BASE_URL이 설정되어 있지 않습니다.');
+  return `${SERVER_API_BASE_URL}${path}`;
+}
+
+function mapServerNetworkError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const isNetworkFailure =
+    error instanceof TypeError ||
+    message.includes('Load failed') ||
+    message.includes('Failed to fetch') ||
+    message.includes('NetworkError') ||
+    message.includes('Network request failed');
+
+  if (!isNetworkFailure) return error instanceof Error ? error : new Error(message || '서버 요청 중 오류가 발생했습니다.');
+
+  return new Error(
+    [
+      '서버에 연결할 수 없습니다.',
+      '네트워크 연결을 확인한 뒤 다시 시도해주세요.',
+    ].join('\n'),
+  );
+}
+
+function readServerSession(): ServerSession | null {
+  try {
+    const raw = localStorage.getItem(TOKEN_KEY);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as ServerSession;
+    return session?.token ? session : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveServerSession(token: string, user: User) {
+  localStorage.setItem(TOKEN_KEY, JSON.stringify({ token, user, provider: 'server' }));
+}
+
+async function serverRequest<T>(path: string, init: RequestInit = {}, authRequired = false): Promise<T> {
+  const headers = new Headers(init.headers);
+  const hasBody = init.body !== undefined && !(init.body instanceof FormData);
+
+  if (hasBody && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  const session = readServerSession();
+  if (session?.token) headers.set('Authorization', `Bearer ${session.token}`);
+  if (authRequired && !session?.token) throw new Error('로그인이 필요합니다.');
+
+  let response: Response;
+  try {
+    response = await fetch(serverApiUrl(path), {
+      ...init,
+      headers,
+    });
+  } catch (error) {
+    throw mapServerNetworkError(error);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json')
+    ? await response.json().catch(() => ({}))
+    : await response.text().catch(() => '');
+
+  if (!response.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'error' in payload
+        ? String((payload as { error: unknown }).error)
+        : `서버 요청 실패: ${response.status}`;
+    throw new Error(message);
+  }
+
+  return payload as T;
 }
 
 function usernameKey(username: string) {
@@ -519,6 +621,7 @@ function missionCompletionFromData(id: string, data: DocumentData) {
   return {
     id,
     userId: String(data.userId || ''),
+    roomId: data.roomId ? String(data.roomId) : null,
     missionId: Number(data.missionId),
     photoId: data.photoId ? String(data.photoId) : null,
     completedAt: String(data.completedAt || now()),
@@ -534,6 +637,8 @@ function rewardTransactionFromData(id: string, data: DocumentData): RewardTransa
     amount: Number(data.amount || 0),
     title: String(data.title || ''),
     desc: String(data.desc || ''),
+    missionId: data.missionId ? Number(data.missionId) : null,
+    roomId: data.roomId ? String(data.roomId) : null,
     createdAt: String(data.createdAt || now()),
   };
 }
@@ -549,6 +654,7 @@ function photoFromData(id: string, data: DocumentData): TravelPhoto {
     date,
     dataUrl: storageTodoDataUrl(label, date),
     source: String(data.source || 'upload'),
+    roomId: data.roomId ? String(data.roomId) : null,
     filename: data.filename ? String(data.filename) : null,
     uploadPath: null,
     mimeType: data.mimeType ? String(data.mimeType) : null,
@@ -564,6 +670,7 @@ function diaryFromData(id: string, data: DocumentData): DiaryEntry {
     title: String(data.title || '오늘의 여행'),
     text: String(data.text || ''),
     photoIds: Array.isArray(data.photoIds) ? data.photoIds.map(String) : [],
+    imageDataUrl: data.imageDataUrl ? String(data.imageDataUrl) : null,
     createdAt: String(data.createdAt || now()),
     updatedAt: String(data.updatedAt || data.createdAt || now()),
   };
@@ -585,7 +692,7 @@ async function initialFirebaseUser() {
   if (auth.currentUser) return auth.currentUser;
 
   return new Promise<FirebaseUser | null>((resolve, reject) => {
-    let unsubscribe = () => undefined;
+    let unsubscribe: () => void = () => undefined;
     unsubscribe = onAuthStateChanged(
       auth,
       (user) => {
@@ -634,9 +741,12 @@ async function userDocsByIds(ids: string[]) {
   return users.filter((user): user is User => Boolean(user));
 }
 
-async function missionStatuses(userId: string): Promise<MissionStatus[]> {
+async function missionStatuses(userId: string, roomId?: string | null): Promise<MissionStatus[]> {
   const snapshot = await getDocs(query(collection(db, 'missionCompletions'), where('userId', '==', userId)));
-  const completions = snapshot.docs.map((item) => missionCompletionFromData(item.id, item.data()));
+  const targetRoomId = roomId || null;
+  const completions = snapshot.docs
+    .map((item) => missionCompletionFromData(item.id, item.data()))
+    .filter((item) => (item.roomId || null) === targetRoomId);
 
   return MISSIONS.map((mission) => {
     const completion = completions.find((item) => item.missionId === mission.id);
@@ -658,6 +768,7 @@ async function createPhotoMetadata(input: {
   label: string;
   date?: string;
   source?: string;
+  roomId?: string | null;
   filename?: string | null;
   mimeType?: string | null;
 }) {
@@ -670,6 +781,7 @@ async function createPhotoMetadata(input: {
     date: input.date || todayIsoDate(),
     dataUrl: storageTodoDataUrl(input.label || '여행 사진', input.date || todayIsoDate()),
     source: input.source || 'upload',
+    roomId: input.roomId || null,
     filename: input.filename || null,
     uploadPath: null,
     mimeType: input.mimeType || null,
@@ -682,6 +794,7 @@ async function createPhotoMetadata(input: {
     label: photo.label,
     date: photo.date,
     source: photo.source,
+    roomId: photo.roomId,
     filename: photo.filename,
     mimeType: photo.mimeType,
     storageStatus: 'todo-storage-disabled',
@@ -697,7 +810,207 @@ async function createPhotoMetadata(input: {
   return photo;
 }
 
-export const api = {
+const serverApi = {
+  baseUrl: () => `server://${SERVER_API_BASE_URL || 'unconfigured'}`,
+
+  async signup(username: string, password: string, displayName?: string) {
+    const data = await serverRequest<{ token: string; user: User }>('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({ username: normalizeUsername(username), password, displayName }),
+    });
+    saveServerSession(data.token, data.user);
+    return data.user;
+  },
+
+  async login(username: string, password: string) {
+    const data = await serverRequest<{ token: string; user: User }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username: normalizeUsername(username), password }),
+    });
+    saveServerSession(data.token, data.user);
+    return data.user;
+  },
+
+  async checkUsername(username: string) {
+    const normalizedUsername = normalizeUsername(username);
+    if (normalizedUsername.length < 3) throw new Error('아이디는 3자 이상이어야 합니다.');
+    const data = await serverRequest<{ available: boolean }>(
+      `/api/auth/check-username?username=${encodeURIComponent(normalizedUsername)}`,
+    );
+    return data.available;
+  },
+
+  async logout() {
+    await serverRequest('/api/auth/logout', { method: 'POST' }, false).catch(() => undefined);
+    localStorage.removeItem(TOKEN_KEY);
+  },
+
+  async me() {
+    if (!readServerSession()) return null;
+    const data = await serverRequest<{ user: User }>('/api/me', {}, true);
+    if (data.user) saveServerSession(readServerSession()?.token || '', data.user);
+    return data.user || null;
+  },
+
+  async friends(queryText = '') {
+    const data = await serverRequest<{ friends: Friend[] }>(
+      `/api/friends?query=${encodeURIComponent(queryText.trim())}`,
+      {},
+      true,
+    );
+    return data.friends || [];
+  },
+
+  async rooms() {
+    const data = await serverRequest<{ rooms: TripRoom[] }>('/api/rooms', {}, true);
+    return data.rooms || [];
+  },
+
+  async createRoom(input: { name?: string; memberIds: string[]; planText?: string }) {
+    const data = await serverRequest<{ room: TripRoom }>('/api/rooms', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+    return data.room;
+  },
+
+  async joinRoom(inviteCode: string) {
+    const data = await serverRequest<{ room: TripRoom }>('/api/rooms/join', {
+      method: 'POST',
+      body: JSON.stringify({ inviteCode: normalizeInviteCode(inviteCode) }),
+    }, true);
+    return data.room;
+  },
+
+  async missions(roomId?: string | null) {
+    const query = roomId ? `?roomId=${encodeURIComponent(roomId)}` : '';
+    const data = await serverRequest<{ missions: MissionStatus[] }>(`/api/missions${query}`, {}, true);
+    return data.missions || [];
+  },
+
+  async completeMission(missionId: number, photoId?: string, earnedPoints?: number, roomId?: string | null, title?: string) {
+    return serverRequest<{ missions: MissionStatus[]; rewards: RewardSummary }>(
+      `/api/missions/${missionId}/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ photoId: photoId || null, earnedPoints, roomId: roomId || null, title }),
+      },
+      true,
+    );
+  },
+
+  async rewards() {
+    return serverRequest<RewardSummary>('/api/rewards', {}, true);
+  },
+
+  async convertLocalCurrency(input: { amount: number; regionName: string; currency: string }) {
+    return serverRequest<{ rewards: RewardSummary }>('/api/rewards/convert', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+  },
+
+  async photos(month?: string, roomId?: string | null) {
+    const params = new URLSearchParams();
+    if (month) params.set('month', month);
+    if (roomId) params.set('roomId', roomId);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    const data = await serverRequest<{ photos: TravelPhoto[] }>(`/api/photos${query}`, {}, true);
+    return data.photos || [];
+  },
+
+  async uploadPhoto(input: { dataUrl: string; label: string; date?: string; source?: string; roomId?: string | null }) {
+    const data = await serverRequest<{ photo: TravelPhoto }>('/api/photos', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+    return data.photo;
+  },
+
+  async uploadPhotoFile(input: { file: Blob; filename: string; label: string; date?: string; source?: string; roomId?: string | null }) {
+    const form = new FormData();
+    form.append('file', input.file, input.filename);
+    form.append('label', input.label);
+    form.append('date', input.date || todayIsoDate());
+    form.append('source', input.source || 'upload');
+    if (input.roomId) form.append('roomId', input.roomId);
+
+    const data = await serverRequest<{ photo: TravelPhoto }>('/api/photos', {
+      method: 'POST',
+      body: form,
+    }, true);
+    return data.photo;
+  },
+
+  async diaries(date?: string) {
+    const query = date ? `?date=${encodeURIComponent(date)}` : '';
+    const data = await serverRequest<{ diaries: DiaryEntry[] }>(`/api/diaries${query}`, {}, true);
+    return data.diaries || [];
+  },
+
+  async saveDiary(input: { date?: string; title?: string; text: string; photoIds?: string[]; imageDataUrl?: string | null }) {
+    const data = await serverRequest<{ diary: DiaryEntry }>('/api/diaries', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+    return data.diary;
+  },
+
+  async updateDiary(id: string, input: { title?: string; text?: string; photoIds?: string[]; imageDataUrl?: string | null }) {
+    const data = await serverRequest<{ diary: DiaryEntry }>(`/api/diaries/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }, true);
+    return data.diary;
+  },
+
+  async saveFourCut(input: { photoIds: string[]; filter: string; imageDataUrl?: string | null }) {
+    const data = await serverRequest<{ fourCut: FourCut }>('/api/fourcuts', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+    return data.fourCut;
+  },
+
+  async share(input: { kind: string; targetId?: string; channel?: string }) {
+    return serverRequest<{ message: string }>('/api/share', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+  },
+
+  async inquiries() {
+    const data = await serverRequest<{ inquiries: Inquiry[] }>('/api/inquiries', {}, true);
+    return data.inquiries || [];
+  },
+
+  async saveInquiry(input: { category: string; message: string }) {
+    const data = await serverRequest<{ inquiry: Inquiry }>('/api/inquiries', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }, true);
+    return data.inquiry;
+  },
+
+  async updateProfile(input: { displayName?: string; code?: string; photoDataUrl?: string | null }) {
+    const data = await serverRequest<{ user: User }>('/api/me/profile', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }, true);
+    const session = readServerSession();
+    if (session?.token) saveServerSession(session.token, data.user);
+    return data.user;
+  },
+
+  async updatePassword(input: { currentPassword: string; newPassword: string }) {
+    await serverRequest<{ ok: boolean }>('/api/me/password', {
+      method: 'PUT',
+      body: JSON.stringify(input),
+    }, true);
+  },
+};
+
+const firebaseApi = {
   baseUrl: firebaseTargetLabel,
 
   async signup(username: string, password: string, displayName?: string) {
@@ -757,7 +1070,7 @@ export const api = {
 
       await commitFirestoreDocumentsRest(
         [
-          { path: `users/${user.id}`, data: user },
+          { path: `users/${user.id}`, data: { ...user } },
           {
             path: `usernames/${usernameKey(normalizedUsername)}`,
             data: {
@@ -768,8 +1081,8 @@ export const api = {
               createdAt: user.createdAt,
             },
           },
-          { path: `rewardTransactions/${localMoneyReward.id}`, data: localMoneyReward },
-          { path: `rewardTransactions/${pointReward.id}`, data: pointReward },
+          { path: `rewardTransactions/${localMoneyReward.id}`, data: { ...localMoneyReward } },
+          { path: `rewardTransactions/${pointReward.id}`, data: { ...pointReward } },
         ],
         authSession.idToken,
       );
@@ -854,9 +1167,10 @@ export const api = {
 
   async rooms() {
     const user = await requireAppUser();
-    const snapshot = await getDocs(query(collection(db, 'rooms'), where('ownerId', '==', user.id)));
+    const snapshot = await getDocs(collection(db, 'rooms'));
     return snapshot.docs
       .map((item) => roomFromData(item.id, item.data()))
+      .filter((room) => room.ownerId === user.id || room.members.some((member) => member.id === user.id))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
 
@@ -877,25 +1191,48 @@ export const api = {
     return room;
   },
 
-  async missions() {
+  async joinRoom(inviteCode: string) {
     const user = await requireAppUser();
-    return missionStatuses(user.id);
+    const code = normalizeInviteCode(inviteCode);
+    if (!code) throw new Error('초대코드를 입력해주세요.');
+
+    const snapshot = await getDocs(query(collection(db, 'rooms'), where('inviteCode', '==', code)));
+    const roomDoc = snapshot.docs[0];
+    if (!roomDoc) throw new Error('일치하는 초대코드의 방을 찾을 수 없습니다.');
+
+    const room = roomFromData(roomDoc.id, roomDoc.data());
+    if (room.ownerId === user.id || room.members.some((member) => member.id === user.id)) return room;
+
+    const members = [...room.members, friendFromUser(user)];
+    await updateDoc(doc(db, 'rooms', room.id), { members });
+    return { ...room, members };
   },
 
-  async completeMission(missionId: number, photoId?: string) {
+  async missions(roomId?: string | null) {
+    const user = await requireAppUser();
+    return missionStatuses(user.id, roomId);
+  },
+
+  async completeMission(missionId: number, photoId?: string, earnedPoints = 100, roomId?: string | null, title?: string) {
     const user = await requireAppUser();
     const mission = MISSIONS.find((item) => item.id === missionId);
     if (!mission) throw new Error('미션을 찾을 수 없습니다.');
+    const targetRoomId = roomId || null;
+    const missionTitle = String(title || mission.title).trim();
 
     const existingSnapshot = await getDocs(
-      query(collection(db, 'missionCompletions'), where('userId', '==', user.id), where('missionId', '==', missionId)),
+      query(collection(db, 'missionCompletions'), where('userId', '==', user.id)),
     );
+    const existing = existingSnapshot.docs
+      .map((item) => missionCompletionFromData(item.id, item.data()))
+      .find((item) => item.missionId === missionId && (item.roomId || null) === targetRoomId);
 
-    if (existingSnapshot.empty) {
+    if (!existing) {
       const completedAt = now();
       const completion = {
         id: makeId('mission'),
         userId: user.id,
+        roomId: targetRoomId,
         missionId,
         photoId: photoId || null,
         completedAt,
@@ -905,17 +1242,21 @@ export const api = {
         userId: user.id,
         category: 'localMoney',
         amount: 1000,
-        title: `${mission.title} 지역화폐 적립`,
+        title: `${missionTitle} 지역화폐 적립`,
         desc: '여행 미션 인증 보상',
+        missionId,
+        roomId: targetRoomId,
         createdAt: completedAt,
       };
       const pointReward: RewardTransaction = {
         id: makeId('reward'),
         userId: user.id,
         category: 'points',
-        amount: 100,
-        title: `${mission.title} 리워드`,
+        amount: Math.max(0, Math.round(earnedPoints)),
+        title: `${missionTitle} 리워드`,
         desc: '미션 완료 포인트',
+        missionId,
+        roomId: targetRoomId,
         createdAt: completedAt,
       };
 
@@ -926,7 +1267,7 @@ export const api = {
       await batch.commit();
     }
 
-    const [missions, transactions] = await Promise.all([missionStatuses(user.id), rewardTransactionsForUser(user.id)]);
+    const [missions, transactions] = await Promise.all([missionStatuses(user.id, targetRoomId), rewardTransactionsForUser(user.id)]);
     return { missions, rewards: rewardSummary(transactions) };
   },
 
@@ -936,26 +1277,51 @@ export const api = {
     return rewardSummary(transactions);
   },
 
-  async photos(month?: string) {
+  async convertLocalCurrency(input: { amount: number; regionName: string; currency: string }) {
+    const user = await requireAppUser();
+    const transactions = await rewardTransactionsForUser(user.id);
+    const pointsBalance = transactions
+      .filter((item) => item.category === 'points')
+      .reduce((sum, item) => sum + item.amount, 0);
+    const amount = Math.max(0, Math.round(input.amount));
+    if (amount <= 0 || amount > pointsBalance) throw new Error('보유 포인트가 부족합니다.');
+
+    const transaction: RewardTransaction = {
+      id: makeId('reward'),
+      userId: user.id,
+      category: 'points',
+      amount: -amount,
+      title: `${input.regionName} ${input.currency} 전환`,
+      desc: '지역화폐 전환 내역',
+      createdAt: now(),
+    };
+    await setDoc(doc(db, 'rewardTransactions', transaction.id), transaction);
+    return { rewards: rewardSummary([...transactions, transaction]) };
+  },
+
+  async photos(month?: string, roomId?: string | null) {
     const user = await requireAppUser();
     const snapshot = await getDocs(query(collection(db, 'photos'), where('userId', '==', user.id)));
+    const targetRoomId = roomId || null;
     return snapshot.docs
       .map((item) => photoFromData(item.id, item.data()))
       .filter((photo) => !month || photo.date.startsWith(month))
+      .filter((photo) => !roomId || (photo.roomId || null) === targetRoomId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   },
 
-  async uploadPhoto(input: { dataUrl: string; label: string; date?: string; source?: string }) {
+  async uploadPhoto(input: { dataUrl: string; label: string; date?: string; source?: string; roomId?: string | null }) {
     console.info('[firebase][photos] TODO: Firebase Storage 보류로 실제 이미지 업로드는 수행하지 않습니다.');
     return createPhotoMetadata({
       label: input.label,
       date: input.date,
       source: input.source,
+      roomId: input.roomId || null,
       mimeType: input.dataUrl.match(/^data:([^;]+);/)?.[1] || null,
     });
   },
 
-  async uploadPhotoFile(input: { file: Blob; filename: string; label: string; date?: string; source?: string }) {
+  async uploadPhotoFile(input: { file: Blob; filename: string; label: string; date?: string; source?: string; roomId?: string | null }) {
     console.info('[firebase][photos] TODO: Firebase Storage 보류로 Blob 파일 업로드는 수행하지 않습니다.', {
       filename: input.filename,
     });
@@ -963,6 +1329,7 @@ export const api = {
       label: input.label,
       date: input.date || todayIsoDate(),
       source: input.source || 'upload',
+      roomId: input.roomId || null,
       filename: input.filename,
       mimeType: input.file.type || null,
     });
@@ -977,7 +1344,7 @@ export const api = {
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   },
 
-  async saveDiary(input: { date?: string; title?: string; text: string; photoIds?: string[] }) {
+  async saveDiary(input: { date?: string; title?: string; text: string; photoIds?: string[]; imageDataUrl?: string | null }) {
     const user = await requireAppUser();
     const diary: DiaryEntry = {
       id: makeId('diary'),
@@ -986,6 +1353,7 @@ export const api = {
       title: String(input.title || '오늘의 여행').trim(),
       text: String(input.text || ''),
       photoIds: Array.isArray(input.photoIds) ? input.photoIds : [],
+      imageDataUrl: input.imageDataUrl || null,
       createdAt: now(),
       updatedAt: now(),
     };
@@ -993,7 +1361,7 @@ export const api = {
     return diary;
   },
 
-  async updateDiary(id: string, input: { title?: string; text?: string; photoIds?: string[] }) {
+  async updateDiary(id: string, input: { title?: string; text?: string; photoIds?: string[]; imageDataUrl?: string | null }) {
     const user = await requireAppUser();
     const diaryRef = doc(db, 'diaries', id);
     const snapshot = await getDoc(diaryRef);
@@ -1006,6 +1374,7 @@ export const api = {
       title: input.title !== undefined ? String(input.title).trim() : current.title,
       text: input.text !== undefined ? String(input.text) : current.text,
       photoIds: Array.isArray(input.photoIds) ? input.photoIds : current.photoIds,
+      imageDataUrl: input.imageDataUrl !== undefined ? input.imageDataUrl : current.imageDataUrl,
       updatedAt: now(),
     };
     await updateDoc(diaryRef, next);
@@ -1045,7 +1414,45 @@ export const api = {
     await setDoc(doc(db, 'shares', share.id), share);
     return { message: '공유 기록이 저장되었습니다.' };
   },
+
+  async inquiries() {
+    const user = await requireAppUser();
+    const snapshot = await getDocs(query(collection(db, 'inquiries'), where('userId', '==', user.id)));
+    return snapshot.docs
+      .map((item) => ({ id: item.id, ...(item.data() as Omit<Inquiry, 'id'>) }))
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  },
+
+  async saveInquiry(input: { category: string; message: string }) {
+    const user = await requireAppUser();
+    const inquiry: Inquiry = {
+      id: makeId('inquiry'),
+      userId: user.id,
+      category: input.category,
+      message: input.message,
+      createdAt: now(),
+    };
+    await setDoc(doc(db, 'inquiries', inquiry.id), inquiry);
+    return inquiry;
+  },
+
+  async updateProfile(input: { displayName?: string; code?: string; photoDataUrl?: string | null }) {
+    const user = await requireAppUser();
+    const next = {
+      ...user,
+      displayName: input.displayName || user.displayName,
+      code: input.code || user.code,
+    };
+    await setDoc(doc(db, 'users', user.id), next, { merge: true });
+    return next;
+  },
+
+  async updatePassword(_input: { currentPassword: string; newPassword: string }) {
+    throw new Error('Firebase fallback의 비밀번호 변경은 계정 관리 화면의 Firebase 직접 처리로만 지원됩니다.');
+  },
 };
+
+export const api = supabaseRequested ? supabaseApi : shouldUseServerApi() ? serverApi : firebaseApi;
 
 export function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
@@ -1097,10 +1504,17 @@ function loadImage(src: string) {
 }
 
 export async function shareText(title: string, text: string) {
+  const sharePayload = `${title}\n${text}`;
+
   if (navigator.share) {
     await navigator.share({ title, text });
     return;
   }
 
-  await navigator.clipboard.writeText(`${title}\n${text}`);
+  if (navigator.clipboard) {
+    await navigator.clipboard.writeText(sharePayload);
+    return;
+  }
+
+  window.prompt('아래 내용을 복사해 공유하세요.', sharePayload);
 }

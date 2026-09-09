@@ -5,6 +5,8 @@ import { YeohaengTab } from './YeohaengTab';
 import { GatiTab } from './GatiTab';
 import { MeohalTab } from './MeohalTab';
 import { GieongTab } from './GieongTab';
+import { copyText } from '../lib/clipboard';
+import type { TripRoom } from '../types';
 
 interface Props {
   activeTab: TabType;
@@ -12,6 +14,8 @@ interface Props {
   onNavigate: (s: AppScreen) => void;
   totalPoints: number;
   onLogout: () => void;
+  activeTrip: TripRoom | null;
+  onTripStarted: (room: TripRoom) => void;
 }
 
 const TAB_ITEMS: { id: TabType; label: string; emoji: string }[] = [
@@ -42,15 +46,24 @@ function readAccountProfile() {
   }
 }
 
-export function MainApp({ activeTab, setActiveTab, onNavigate, totalPoints, onLogout }: Props) {
+export function MainApp({ activeTab, setActiveTab, onNavigate, totalPoints, onLogout, activeTrip, onTripStarted }: Props) {
   const [profile] = useState(readAccountProfile);
   const [showProfile, setShowProfile] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
-  const handleCopy = () => {
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    try {
+      await copyText(profile.userCode);
+      setCopyError(false);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+      setCopyError(true);
+      window.setTimeout(() => setCopyError(false), 2000);
+    }
   };
 
   const handleSettingsItem = (key: string) => {
@@ -193,7 +206,7 @@ export function MainApp({ activeTab, setActiveTab, onNavigate, totalPoints, onLo
               </div>
               <div>
                 <p style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>{profile.displayName}</p>
-                <p style={{ fontSize: 11, color: '#9E8B7E' }}>traveler@moments.kr</p>
+                <p style={{ fontSize: 11, color: '#9E8B7E' }}>모먼트립 여행자</p>
               </div>
             </div>
             <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: '#FAF8F5' }}>
@@ -204,13 +217,20 @@ export function MainApp({ activeTab, setActiveTab, onNavigate, totalPoints, onLo
                 </p>
               </div>
               <button
-                onClick={handleCopy}
+                type="button"
+                onClick={() => void handleCopy()}
+                aria-label="사용자 코드 복사"
                 className="w-8 h-8 rounded-xl flex items-center justify-center active:scale-90 transition-all"
-                style={{ background: copied ? '#C97C56' : '#EDE5DB' }}
+                style={{ background: copied ? '#C97C56' : copyError ? '#FDE2E2' : '#EDE5DB' }}
               >
                 {copied ? <Check size={14} color="#FFF" /> : <Copy size={14} color="#2A1F1A" />}
               </button>
             </div>
+            {copyError && (
+              <p role="alert" className="mt-2" style={{ fontSize: 10, color: '#B42318' }}>
+                복사할 수 없습니다. 코드를 길게 눌러 선택해주세요.
+              </p>
+            )}
           </div>
         )}
 
@@ -267,8 +287,8 @@ export function MainApp({ activeTab, setActiveTab, onNavigate, totalPoints, onLo
 
       {/* ── Tab content ── */}
       <div className="flex-1 overflow-hidden relative">
-        {activeTab === 'yeohaeng' && <YeohaengTab onNavigate={onNavigate} onHome={onHome} />}
-        {activeTab === 'gati' && <GatiTab onNavigate={onNavigate} onHome={onHome} />}
+        {activeTab === 'yeohaeng' && <YeohaengTab onNavigate={onNavigate} onHome={onHome} activeTrip={activeTrip} onTripStarted={onTripStarted} />}
+        {activeTab === 'gati' && <GatiTab onNavigate={onNavigate} onHome={onHome} activeTrip={activeTrip} onTripStarted={onTripStarted} />}
         {activeTab === 'meohal' && <MeohalTab onHome={onHome} />}
         {activeTab === 'gieong' && <GieongTab onHome={onHome} />}
       </div>

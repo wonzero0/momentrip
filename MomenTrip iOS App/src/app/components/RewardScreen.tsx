@@ -1,14 +1,23 @@
-import { ChevronLeft, TrendingDown, TrendingUp } from 'lucide-react';
+import { ChevronLeft, Coins, Compass, Store, TrendingDown, TrendingUp } from 'lucide-react';
 import type { RewardHistoryItem } from '../App';
 
 interface Props {
   onBack: () => void;
   onLocalCurrency: () => void;
+  onOpenMarketGuide: () => void;
+  onOpenTourDiversity: () => void;
   totalPoints: number;
   history: RewardHistoryItem[];
 }
 
-export function RewardScreen({ onBack, onLocalCurrency, totalPoints, history }: Props) {
+export function RewardScreen({
+  onBack,
+  onLocalCurrency,
+  onOpenMarketGuide,
+  onOpenTourDiversity,
+  totalPoints,
+  history,
+}: Props) {
   const totalEarned = history.reduce((s, h) => s + h.earned, 0);
   const totalUsed = history.reduce((s, h) => s + h.used, 0);
 
@@ -76,6 +85,63 @@ export function RewardScreen({ onBack, onLocalCurrency, totalPoints, history }: 
               </p>
             </div>
           </div>
+        </div>
+
+        <div className="flex items-center justify-between mb-3">
+          <p style={{ fontSize: 14, fontWeight: 700, color: '#2A1F1A' }}>충남 지역 혜택</p>
+          <span style={{ fontSize: 11, color: '#9E8B7E' }}>바로가기</span>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <button
+            onClick={onOpenMarketGuide}
+            className="p-4 text-left active:scale-95 transition-all"
+            style={{
+              minHeight: 126,
+              borderRadius: 20,
+              background: '#FFFFFF',
+              boxShadow: '0 3px 14px rgba(42,31,26,0.07)',
+              border: '1px solid rgba(201,124,86,0.12)',
+            }}
+          >
+            <div
+              className="w-10 h-10 flex items-center justify-center mb-4"
+              style={{ borderRadius: 14, background: '#FFF0E6' }}
+            >
+              <Store size={20} color="#C97C56" />
+            </div>
+            <p style={{ fontSize: 13, fontWeight: 800, color: '#2A1F1A', lineHeight: 1.35 }}>
+              지역화폐 음식점
+            </p>
+            <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 5, lineHeight: 1.45 }}>
+              충남 로컬 사용처 후보
+            </p>
+          </button>
+
+          <button
+            onClick={onOpenTourDiversity}
+            className="p-4 text-left active:scale-95 transition-all"
+            style={{
+              minHeight: 126,
+              borderRadius: 20,
+              background: '#FFFFFF',
+              boxShadow: '0 3px 14px rgba(42,31,26,0.07)',
+              border: '1px solid rgba(101,129,78,0.12)',
+            }}
+          >
+            <div
+              className="w-10 h-10 flex items-center justify-center mb-4"
+              style={{ borderRadius: 14, background: '#EEF3E8' }}
+            >
+              <Compass size={20} color="#65814E" />
+            </div>
+            <p style={{ fontSize: 13, fontWeight: 800, color: '#2A1F1A', lineHeight: 1.35 }}>
+              관광 다양성
+            </p>
+            <p style={{ fontSize: 11, color: '#9E8B7E', marginTop: 5, lineHeight: 1.45 }}>
+              지역별 방문 후보 비교
+            </p>
+          </button>
         </div>
 
         {/* History label */}
@@ -148,7 +214,7 @@ export function RewardScreen({ onBack, onLocalCurrency, totalPoints, history }: 
             boxShadow: '0 8px 24px rgba(201,124,86,0.35)',
           }}
         >
-          <span style={{ fontSize: 18 }}>🏦</span>
+          <Coins size={18} color="#FFFFFF" />
           지역화폐로 전환
         </button>
       </div>

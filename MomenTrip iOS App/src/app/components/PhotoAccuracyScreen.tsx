@@ -1,11 +1,12 @@
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, MapPin, ImageIcon, Upload, CheckCircle2 } from 'lucide-react';
 import { MissionInfo } from '../App';
+import { isNativeApp, pickNativePhotoBlob } from '../lib/nativeCamera';
 
 interface Props {
   mission: MissionInfo | null;
   onBack: () => void;
-  onConfirm: (earnedReward: number, photoDataUrl: string | null) => void;
+  onConfirm: (earnedReward: number, photoDataUrl: string | null) => Promise<void> | void;
 }
 
 const ACCURACY_DATA: Record<number, { imageScore: number; locationScore: number }> = {
@@ -42,12 +43,22 @@ function AnimatedBar({ target, color, delay }: { target: number; color: string; 
   );
 }
 
+function readBlobAsDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('사진 파일을 읽을 수 없습니다.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 export function PhotoAccuracyScreen({ mission, onBack, onConfirm }: Props) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploaded, setUploaded] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [done, setDone] = useState(false);
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const missionId = mission?.id ?? 1;
   const scores = ACCURACY_DATA[missionId] ?? { imageScore: 90, locationScore: 85 };
@@ -61,8 +72,29 @@ export function PhotoAccuracyScreen({ mission, onBack, onConfirm }: Props) {
     setPhotoDataUrl(null);
   }, [missionId]);
 
-  const handleUpload = () => {
-    fileInputRef.current?.click();
+  const startAnalysis = (dataUrl: string | null) => {
+    setPhotoDataUrl(dataUrl);
+    setUploaded(true);
+    setAnalyzing(true);
+    setDone(false);
+    setTimeout(() => {
+      setAnalyzing(false);
+      setDone(true);
+    }, 1800);
+  };
+
+  const handleUpload = async () => {
+    if (!isNativeApp()) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    try {
+      const photo = await pickNativePhotoBlob();
+      startAnalysis(await readBlobAsDataUrl(photo.blob));
+    } catch (error) {
+      if (error instanceof Error) alert(error.message);
+    }
   };
 
   const handleFileSelected = (event: ChangeEvent<HTMLInputElement>) => {
@@ -71,14 +103,7 @@ export function PhotoAccuracyScreen({ mission, onBack, onConfirm }: Props) {
 
     const reader = new FileReader();
     reader.onload = () => {
-      setPhotoDataUrl(typeof reader.result === 'string' ? reader.result : null);
-      setUploaded(true);
-      setAnalyzing(true);
-      setDone(false);
-      setTimeout(() => {
-        setAnalyzing(false);
-        setDone(true);
-      }, 1800);
+      startAnalysis(typeof reader.result === 'string' ? reader.result : null);
     };
     reader.readAsDataURL(file);
     event.target.value = '';
@@ -371,19 +396,29 @@ export function PhotoAccuracyScreen({ mission, onBack, onConfirm }: Props) {
       {/* Confirm button */}
       <div className="px-5 py-5 flex-shrink-0">
         <button
-          onClick={() => onConfirm(earnedReward, photoDataUrl)}
-          disabled={!done}
+          onClick={async () => {
+            if (!done || confirming) return;
+            setConfirming(true);
+            try {
+              await onConfirm(earnedReward, photoDataUrl);
+            } catch (error) {
+              alert(error instanceof Error ? error.message : '미션 저장에 실패했습니다. 다시 시도해주세요.');
+            } finally {
+              setConfirming(false);
+            }
+          }}
+          disabled={!done || confirming}
           className="w-full py-4 rounded-2xl active:scale-95 transition-all"
           style={{
-            background: done ? '#C97C56' : '#EDE5DB',
-            color: done ? '#FFFFFF' : '#9E8B7E',
+            background: done && !confirming ? '#C97C56' : '#EDE5DB',
+            color: done && !confirming ? '#FFFFFF' : '#9E8B7E',
             fontSize: 16,
             fontWeight: 700,
             border: 'none',
-            boxShadow: done ? '0 8px 24px rgba(201,124,86,0.35)' : 'none',
+            boxShadow: done && !confirming ? '0 8px 24px rgba(201,124,86,0.35)' : 'none',
           }}
         >
-          {done ? `+${earnedReward.toLocaleString()}P 획득` : '사진을 업로드해주세요'}
+          {confirming ? '저장 중...' : done ? `+${earnedReward.toLocaleString()}P 획득` : '사진을 업로드해주세요'}
         </button>
       </div>
     </div>
